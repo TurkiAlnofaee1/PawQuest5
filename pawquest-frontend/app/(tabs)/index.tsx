@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React from 'react';
 import { StyleSheet, ImageBackground, SafeAreaView, View, Text, TouchableOpacity, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -121,6 +122,7 @@ const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
 const Home: React.FC = () => {
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const scheme = (colorScheme === 'dark' ? 'dark' : 'light') as 'light' | 'dark';
   const textColor = Colors[scheme].text;
@@ -130,14 +132,23 @@ const Home: React.FC = () => {
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.topBarRow}>
-          <TouchableOpacity testID="icon-settings" hitSlop={16} accessibilityLabel="Open settings">
+          {/* Settings button → opens /settings */}
+          <TouchableOpacity
+            testID="icon-settings"
+            hitSlop={16}
+            accessibilityLabel="Open settings"
+            onPress={() => router.push('/settings')}
+          >
             <MaterialCommunityIcons
               name="cog-outline"
               size={28}
               color={iconColor}
             />
           </TouchableOpacity>
-          <Text testID="home-title" style={[styles.topBarTitle, { color: textColor }]}>Home</Text>
+
+          <Text style={[styles.topBarTitle, { color: textColor }]}>Home</Text>
+
+          {/* Example: Notifications icon stays the same */}
           <TouchableOpacity testID="icon-bell" hitSlop={16} accessibilityLabel="Open notifications">
             <MaterialCommunityIcons
               name="bell-outline"
@@ -146,12 +157,15 @@ const Home: React.FC = () => {
             />
           </TouchableOpacity>
         </View>
+
+        {/* Your stats card and body content */}
         <StatsCard colorScheme={colorScheme} />
         <View style={styles.body} />
       </SafeAreaView>
     </ImageBackground>
   );
 };
+
 
 export default Home;
 
