@@ -24,3 +24,11 @@ Thumbs.db
 .vscode/
 .idea/
 "@ | Out-File -Encoding utf8 .gitignore
+
+
+.github/instructions/kluster-code-verify.instructions.md
+.kluster
+
+# Firebase service account keys (NEVER commit these!)
+*firebase-adminsdk*.json
+pawquest-2644a-firebase-adminsdk-fbsvc-*.json
