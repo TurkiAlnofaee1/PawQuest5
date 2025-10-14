@@ -5,7 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Stack, useRouter } from "expo-router";
 import CListCore from "./CListCore";
 
-const bgImage = require("../../../assets/images/ImageBackground.jpg");
+const bgImage = require("../../assets/images/ImageBackground.jpg");
 
 export default function CityList() {
   const router = useRouter();
@@ -14,7 +14,7 @@ export default function CityList() {
     <ImageBackground source={bgImage} style={{ flex: 1 }} resizeMode="cover">
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.88)" }}>
+  <View style={{ flex: 1 }}>
         <View style={styles.header}>
           <Pressable onPress={() => router.push("/(tabs)/challenges")} style={styles.backBtn}>
             <Ionicons name="chevron-back" size={20} />
