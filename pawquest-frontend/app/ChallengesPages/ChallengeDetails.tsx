@@ -1,4 +1,4 @@
-// app/(tabs)/ChallengesPages/ChallengeDetails.tsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -8,11 +8,13 @@ import {
   Pressable,
   ActivityIndicator,
   ScrollView,
+  SafeAreaView,
+  Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { db } from "../../src/lib/firebase"; // adjust if your path differs
+import { db } from "../../src/lib/firebase"; 
 import { doc, getDoc } from "firebase/firestore";
 
 const bgImage = require("../../assets/images/ImageBackground.jpg");
@@ -89,149 +91,157 @@ export default function ChallengeDetails() {
     });
   };
 
+
   if (loading) {
     return (
-      <ImageBackground source={bgImage} style={{ flex: 1 }} resizeMode="cover">
-        <Stack.Screen options={{ headerShown: false }} />
-        <View style={styles.center}>
-          <ActivityIndicator size="large" />
-        </View>
+      <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+  <SafeAreaView style={safeAreaStyle}>
+          <Stack.Screen options={{ headerShown: false }} />
+          <View style={styles.center}>
+            <ActivityIndicator size="large" />
+          </View>
+        </SafeAreaView>
       </ImageBackground>
     );
   }
 
   if (!data) {
     return (
-      <ImageBackground source={bgImage} style={{ flex: 1 }} resizeMode="cover">
-        <Stack.Screen options={{ headerShown: false }} />
-        <View style={styles.center}>
-          <Text>Challenge not found.</Text>
-        </View>
+      <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+  <SafeAreaView style={safeAreaStyle}>
+          <Stack.Screen options={{ headerShown: false }} />
+          <View style={styles.center}>
+            <Text>Challenge not found.</Text>
+          </View>
+        </SafeAreaView>
       </ImageBackground>
     );
   }
 
   return (
-    <ImageBackground source={bgImage} style={{ flex: 1 }} resizeMode="cover">
-      <Stack.Screen options={{ headerShown: false }} />
-
-      <ScrollView
-        style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.9)" }}
-        contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="chevron-back" size={22} />
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.titleTop}>{data.title || title || "Challenge"}</Text>
-            <Text style={styles.subtitle}>
-              {category ? String(category).toUpperCase() : ""}
-            </Text>
-          </View>
-        </View>
-
-        {/* Tabs */}
-        <View style={styles.tabs}>
-          {(["easy", "hard"] as const).map((t) => {
-            const enabled = Boolean(data.variants?.[t]);
-            const active = tab === t;
-            return (
-              <Pressable
-                key={t}
-                disabled={!enabled}
-                onPress={() => setTab(t)}
-                style={[
-                  styles.tabBtn,
-                  active && styles.tabActive,
-                  !enabled && { opacity: 0.5 },
-                ]}
-              >
-                <Text style={[styles.tabText, active && styles.tabTextActive]}>
-                  {t[0].toUpperCase() + t.slice(1)}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Banner */}
-        {variant?.smartwatchRequired ? (
-          <View style={styles.banner}>
-            <Text style={styles.bannerTitle}>Smartwatch required</Text>
-            <Text style={styles.bannerSub}>
-              This level needs a connected smartwatch to track heart rate or HIIT workout.
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.banner}>
-            <Text style={styles.bannerTitle}>BEFORE YOU START</Text>
-            <Text style={styles.bannerSub}>
-              For best results, connect a smartwatch and headphones.
-            </Text>
-          </View>
-        )}
-
-        {/* Reward */}
-        <View style={styles.rewardCard}>
-          <Text style={styles.rewardLabel}>Rewards:</Text>
-          <View style={styles.rewardPet}>
-            <MaterialCommunityIcons name="bird" size={36} color="#111" />
-            <Text style={styles.rewardPetName}>{data.rewardPet ?? "—"}</Text>
-          </View>
-          <View style={styles.pointsPill}>
-            <Text style={styles.pointsText}>{variant?.xp ?? 0} points</Text>
-          </View>
-        </View>
-
-        {/* Stats */}
-        <View style={styles.statsCard}>
-          <View style={styles.statsHeader}>
-            <Text style={styles.statsTitle}>The Lost Letter ▾</Text>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <Text style={styles.smallDim}>
-                {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
+    <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+  <SafeAreaView style={safeAreaStyle}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <Pressable onPress={() => router.back()} style={styles.backBtn}>
+              <Ionicons name="chevron-back" size={22} />
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.titleTop}>{data.title || title || "Challenge"}</Text>
+              <Text style={styles.subtitle}>
+                {category ? String(category).toUpperCase() : ""}
               </Text>
-              <Text style={styles.smallDim}>
-                {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
-              </Text>
-              <Text style={styles.smallDim}>★ {data.stats?.rating ?? 4.0}</Text>
             </View>
           </View>
 
-          <View style={styles.statsRow}>
-            <Text style={styles.statItem}>👣 {mToKm(variant?.distanceMeters)}</Text>
-            <Text style={styles.statItem}>🔥 {variant?.calories ?? "—"} cal</Text>
-            <Text style={styles.statItem}>
-              <Ionicons name="time-outline" size={14} /> {variant?.estimatedTimeMin ?? "—"} min
-            </Text>
-            <Text style={styles.statItem}>HIIT: {variant?.hiitType ?? "—"}</Text>
+          {/* Tabs */}
+          <View style={styles.tabs}>
+            {(["easy", "hard"] as const).map((t) => {
+              const enabled = Boolean(data.variants?.[t]);
+              const active = tab === t;
+              return (
+                <Pressable
+                  key={t}
+                  disabled={!enabled}
+                  onPress={() => setTab(t)}
+                  style={[
+                    styles.tabBtn,
+                    active && styles.tabActive,
+                    !enabled && { opacity: 0.5 },
+                  ]}
+                >
+                  <Text style={[styles.tabText, active && styles.tabTextActive]}>
+                    {t[0].toUpperCase() + t.slice(1)}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
-        </View>
 
-        {/* Connectivity */}
-        <View style={styles.connectLine}>
-          <Text style={styles.connectText}>
-            Smartwatch: {data.info?.smartwatch ?? "Not Connected"}
-          </Text>
-          <Text style={styles.connectText}>GPS: {data.info?.gps ?? "Active"}</Text>
-          <Text style={styles.connectText}>
-            Headphones: {data.info?.headphones ?? "Connected"}
-          </Text>
-        </View>
+          {/* Banner */}
+          {variant?.smartwatchRequired ? (
+            <View style={styles.banner}>
+              <Text style={styles.bannerTitle}>Smartwatch required</Text>
+              <Text style={styles.bannerSub}>
+                This level needs a connected smartwatch to track heart rate or HIIT workout.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.banner}>
+              <Text style={styles.bannerTitle}>BEFORE YOU START</Text>
+              <Text style={styles.bannerSub}>
+                For best results, connect a smartwatch and headphones.
+              </Text>
+            </View>
+          )}
 
-        {/* Start Challenge */}
-        <Pressable style={styles.cta} onPress={handleStart}>
-          <Text style={styles.ctaText}>Start Challenge</Text>
-        </Pressable>
-      </ScrollView>
+          {/* Reward */}
+          <View style={styles.rewardCard}>
+            <Text style={styles.rewardLabel}>Rewards:</Text>
+            <View style={styles.rewardPet}>
+              <MaterialCommunityIcons name="bird" size={36} color="#111" />
+              <Text style={styles.rewardPetName}>{data.rewardPet ?? "—"}</Text>
+            </View>
+            <View style={styles.pointsPill}>
+              <Text style={styles.pointsText}>{variant?.xp ?? 0} points</Text>
+            </View>
+          </View>
+
+          {/* Stats */}
+          <View style={styles.statsCard}>
+            <View style={styles.statsHeader}>
+              <Text style={styles.statsTitle}>The Lost Letter ▾</Text>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Text style={styles.smallDim}>
+                  {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
+                </Text>
+                <Text style={styles.smallDim}>
+                  {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
+                </Text>
+                <Text style={styles.smallDim}>★ {data.stats?.rating ?? 4.0}</Text>
+              </View>
+            </View>
+
+            <View style={styles.statsRow}>
+              <Text style={styles.statItem}>👣 {mToKm(variant?.distanceMeters)}</Text>
+              <Text style={styles.statItem}>🔥 {variant?.calories ?? "—"} cal</Text>
+              <Text style={styles.statItem}>
+                <Ionicons name="time-outline" size={14} /> {variant?.estimatedTimeMin ?? "—"} min
+              </Text>
+              <Text style={styles.statItem}>HIIT: {variant?.hiitType ?? "—"}</Text>
+            </View>
+          </View>
+
+          {/* Connectivity */}
+          <View style={styles.connectLine}>
+            <Text style={styles.connectText}>
+              Smartwatch: {data.info?.smartwatch ?? "Not Connected"}
+            </Text>
+            <Text style={styles.connectText}>GPS: {data.info?.gps ?? "Active"}</Text>
+            <Text style={styles.connectText}>
+              Headphones: {data.info?.headphones ?? "Connected"}
+            </Text>
+          </View>
+
+          {/* Start Challenge */}
+          <Pressable style={styles.cta} onPress={handleStart}>
+            <Text style={styles.ctaText}>Start Challenge</Text>
+          </Pressable>
+        </ScrollView>
+      </SafeAreaView>
     </ImageBackground>
   );
 }
 
+
 const styles = StyleSheet.create({
+  bg: { flex: 1, width: "100%", height: "100%" },
   center: {
     flex: 1,
     alignItems: "center",
@@ -314,6 +324,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 8,
   },
+  statsTitle: { fontSize: 14, fontWeight: "700", color: "#0C2E16" },
   smallDim: { fontSize: 12, color: "#4b5563" },
   statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
   statItem: { fontSize: 12, color: "#111" },
@@ -339,3 +350,9 @@ const styles = StyleSheet.create({
   },
   ctaText: { fontSize: 16, fontWeight: "900", color: "#0b3d1f" },
 });
+
+const safeAreaStyle = {
+  flex: 1,
+  paddingHorizontal: 16,
+  paddingTop: Platform.OS === 'ios' ? 12 : 8,
+};

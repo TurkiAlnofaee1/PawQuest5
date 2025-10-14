@@ -43,6 +43,13 @@ const converter: FirestoreDataConverter<Challenge> = {
   toFirestore: (c) => c as any,
   fromFirestore: (snap: QueryDocumentSnapshot) => {
     const d = snap.data() as any;
+    // Prefer variants.easy.estimatedTimeMin if present, else fallback to top-level
+    let estimatedTimeMin = undefined;
+    if (typeof d?.variants?.easy?.estimatedTimeMin === "number") {
+      estimatedTimeMin = d.variants.easy.estimatedTimeMin;
+    } else if (typeof d?.estimatedTimeMin === "number") {
+      estimatedTimeMin = d.estimatedTimeMin;
+    }
     return {
       id: snap.id,
       title: String(d?.title ?? ""),
@@ -50,8 +57,7 @@ const converter: FirestoreDataConverter<Challenge> = {
       imageUrl: typeof d?.imageUrl === "string" ? d.imageUrl : undefined,
       distanceMeters:
         typeof d?.distanceMeters === "number" ? d.distanceMeters : undefined,
-      estimatedTimeMin:
-        typeof d?.estimatedTimeMin === "number" ? d.estimatedTimeMin : undefined,
+      estimatedTimeMin,
       difficulty: (["easy", "hard"] as const).includes(d?.difficulty)
         ? d.difficulty
         : undefined,
@@ -180,7 +186,7 @@ const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.10)",
-    backgroundColor: "#fff",
+    backgroundColor: "#BEE3FF", // light blue
     borderRadius: 16,
     padding: 12,
     flexDirection: "row",
