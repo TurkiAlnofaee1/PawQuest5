@@ -5,7 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Stack, useRouter } from "expo-router";
 import CListCore from "./CListCore";
 
-const bgImage = require("../../assets/images/ImageBackground.jpg");
+const bgImage = require("../../assets/images/formula-1.jpeg");
 
 export default function CityList() {
   const router = useRouter();
@@ -54,5 +54,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.06)",
   },
-  h1: { fontSize: 22, fontWeight: "800", color: "#0C2E16" },
+  h1: { fontSize: 22, fontWeight: "800", color: "#35b35aff" },
 });

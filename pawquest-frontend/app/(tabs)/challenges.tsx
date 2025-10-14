@@ -114,6 +114,6 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 18, fontWeight: "800", color: "#1A1A1A" },
   cardSub: { fontSize: 13.5, color: "rgba(0,0,0,0.75)", fontWeight: "600" },
   cardRight: { width: 64, height: 64, alignItems: "center", justifyContent: "center" },
-  quickBtn: { marginHorizontal: 16, marginTop: 8, marginBottom: 8, backgroundColor: "#CBE7B7", borderRadius: 16, paddingVertical: 14, paddingHorizontal: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.10)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  quickBtn: { marginHorizontal: 16, marginTop: 8, marginBottom: 64, backgroundColor: "#CBE7B7", borderRadius: 16, paddingVertical: 14, paddingHorizontal: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.10)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   quickText: { fontWeight: "800", fontSize: 15, color: "#1B3D1F" },
 });

@@ -1,4 +1,4 @@
-
+// app/(tabs)/ChallengesPages/ChallengeDetails.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -10,15 +10,23 @@ import {
   ScrollView,
   SafeAreaView,
   Platform,
+  Modal,
 } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { db } from "../../src/lib/firebase"; 
-import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../src/lib/firebase";
+import {
+  doc,
+  getDoc,
+  collection,
+  getDocs,
+  QueryDocumentSnapshot,
+} from "firebase/firestore";
 
 const bgImage = require("../../assets/images/ImageBackground.jpg");
 
+/* ---------- Types ---------- */
 type Variant = {
   xp: number;
   distanceMeters: number;
@@ -27,6 +35,15 @@ type Variant = {
   steps: number;
   hiitType?: string;
   smartwatchRequired?: boolean;
+};
+
+type Story = {
+  id: string;
+  title: string;
+  distanceMeters?: number;
+  estimatedTimeMin?: number;
+  calories?: number;
+  hiitType?: string;
 };
 
 type ChallengeDoc = {
@@ -41,9 +58,11 @@ type ChallengeDoc = {
   info?: { smartwatch?: string; gps?: string; headphones?: string };
 };
 
+/* ---------- Helpers ---------- */
 const mToKm = (m?: number) =>
   typeof m === "number" ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : "—";
 
+/* ---------- Component ---------- */
 export default function ChallengeDetails() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -54,17 +73,48 @@ export default function ChallengeDetails() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"easy" | "hard">("easy");
 
+  // stories
+  const [stories, setStories] = useState<Story[]>([]);
+  const [storyPickerOpen, setStoryPickerOpen] = useState(false);
+  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+
+  // fetch challenge + stories
   useEffect(() => {
     let active = true;
     (async () => {
       try {
         if (!id) return;
+
+        // challenge
         const ref = doc(db, "challenges", String(id));
         const snap = await getDoc(ref);
         if (snap.exists() && active) {
           const d = snap.data() as ChallengeDoc;
           setData(d);
           if (d.variants?.hard && !d.variants?.easy) setTab("hard");
+        }
+
+        // stories subcollection (optional)
+        const sref = collection(db, "challenges", String(id), "stories");
+        const ssnap = await getDocs(sref);
+        const list: Story[] = ssnap.docs.map((d: QueryDocumentSnapshot) => {
+          const raw = d.data() as any;
+          return {
+            id: d.id,
+            title: String(raw?.title ?? "Untitled"),
+            distanceMeters:
+              typeof raw?.distanceMeters === "number" ? raw.distanceMeters : undefined,
+            estimatedTimeMin:
+              typeof raw?.estimatedTimeMin === "number" ? raw.estimatedTimeMin : undefined,
+            calories: typeof raw?.calories === "number" ? raw.calories : undefined,
+            hiitType: typeof raw?.hiitType === "string" ? raw.hiitType : undefined,
+          };
+        });
+
+        if (active) {
+          setStories(list);
+          // default to first story if exists
+          if (list.length > 0) setSelectedStoryId(list[0].id);
         }
       } catch (e) {
         console.error("Failed to load challenge:", e);
@@ -77,25 +127,40 @@ export default function ChallengeDetails() {
     };
   }, [id]);
 
-  const variant: Variant | undefined = useMemo(() => data?.variants?.[tab], [data, tab]);
+  const variant: Variant | undefined = useMemo(
+    () => data?.variants?.[tab],
+    [data, tab]
+  );
+
+  const selectedStory = useMemo(
+    () => stories.find((s) => s.id === selectedStoryId) || null,
+    [stories, selectedStoryId]
+  );
+
+  // Stats displayed = story override FIRST, fallback to variant
+  const statDistance = selectedStory?.distanceMeters ?? variant?.distanceMeters;
+  const statCalories = selectedStory?.calories ?? variant?.calories;
+  const statTime = selectedStory?.estimatedTimeMin ?? variant?.estimatedTimeMin;
+  const statHiit = selectedStory?.hiitType ?? variant?.hiitType;
 
   const handleStart = () => {
     router.push({
-      pathname: "/ChallengesPages/StartedChallenge",
+      pathname: "/ChallengesPages/map",
       params: {
-        id: String(id),
+        challengeId: String(id),
         title: data?.title || title || "Challenge",
         category: category || data?.categoryId || "",
         difficulty: tab,
+        storyId: selectedStory?.id ?? "",
       },
     });
   };
 
-
+  /* ---------- Loading / Not found ---------- */
   if (loading) {
     return (
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
-  <SafeAreaView style={safeAreaStyle}>
+        <SafeAreaView style={safeAreaStyle}>
           <Stack.Screen options={{ headerShown: false }} />
           <View style={styles.center}>
             <ActivityIndicator size="large" />
@@ -108,7 +173,7 @@ export default function ChallengeDetails() {
   if (!data) {
     return (
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
-  <SafeAreaView style={safeAreaStyle}>
+        <SafeAreaView style={safeAreaStyle}>
           <Stack.Screen options={{ headerShown: false }} />
           <View style={styles.center}>
             <Text>Challenge not found.</Text>
@@ -118,19 +183,21 @@ export default function ChallengeDetails() {
     );
   }
 
+  /* ---------- UI ---------- */
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
-  <SafeAreaView style={safeAreaStyle}>
+      <SafeAreaView style={safeAreaStyle}>
         <Stack.Screen options={{ headerShown: false }} />
+
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
+          contentContainerStyle={{ paddingBottom: 28 + insets.bottom }}
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
           <View style={styles.header}>
             <Pressable onPress={() => router.back()} style={styles.backBtn}>
-              <Ionicons name="chevron-back" size={22} />
+              <Ionicons name="chevron-back" size={22} color="#0B3D1F" />
             </Pressable>
             <View style={{ flex: 1 }}>
               <Text style={styles.titleTop}>{data.title || title || "Challenge"}</Text>
@@ -140,7 +207,7 @@ export default function ChallengeDetails() {
             </View>
           </View>
 
-          {/* Tabs */}
+          {/* Tabs — spaced out a bit more */}
           <View style={styles.tabs}>
             {(["easy", "hard"] as const).map((t) => {
               const enabled = Boolean(data.variants?.[t]);
@@ -153,7 +220,7 @@ export default function ChallengeDetails() {
                   style={[
                     styles.tabBtn,
                     active && styles.tabActive,
-                    !enabled && { opacity: 0.5 },
+                    !enabled && { opacity: 0.45 },
                   ]}
                 >
                   <Text style={[styles.tabText, active && styles.tabTextActive]}>
@@ -164,16 +231,16 @@ export default function ChallengeDetails() {
             })}
           </View>
 
-          {/* Banner */}
+          {/* Banner (different colors) */}
           {variant?.smartwatchRequired ? (
-            <View style={styles.banner}>
+            <View style={[styles.banner, styles.bannerRequired]}>
               <Text style={styles.bannerTitle}>Smartwatch required</Text>
               <Text style={styles.bannerSub}>
                 This level needs a connected smartwatch to track heart rate or HIIT workout.
               </Text>
             </View>
           ) : (
-            <View style={styles.banner}>
+            <View style={[styles.banner, styles.bannerBefore]}>
               <Text style={styles.bannerTitle}>BEFORE YOU START</Text>
               <Text style={styles.bannerSub}>
                 For best results, connect a smartwatch and headphones.
@@ -181,11 +248,11 @@ export default function ChallengeDetails() {
             </View>
           )}
 
-          {/* Reward */}
+          {/* Reward card */}
           <View style={styles.rewardCard}>
-            <Text style={styles.rewardLabel}>Rewards:</Text>
+            <Text style={styles.rewardLabel}>Rewards</Text>
             <View style={styles.rewardPet}>
-              <MaterialCommunityIcons name="bird" size={36} color="#111" />
+              <MaterialCommunityIcons name="bird" size={36} color="#0B3D1F" />
               <Text style={styles.rewardPetName}>{data.rewardPet ?? "—"}</Text>
             </View>
             <View style={styles.pointsPill}>
@@ -193,11 +260,19 @@ export default function ChallengeDetails() {
             </View>
           </View>
 
-          {/* Stats */}
+          {/* Stats card with Story picker */}
           <View style={styles.statsCard}>
-            <View style={styles.statsHeader}>
-              <Text style={styles.statsTitle}>The Lost Letter ▾</Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
+            {/* Story header line */}
+            <Pressable
+              style={styles.statsHeader}
+              onPress={() => setStoryPickerOpen(true)}
+            >
+              <Text style={styles.statsTitle}>
+                {selectedStory?.title ?? "Choose a Story"}{" "}
+                <Text style={{ color: "#0B3D1F" }}>▾</Text>
+              </Text>
+
+              <View style={{ flexDirection: "row", gap: 12 }}>
                 <Text style={styles.smallDim}>
                   {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
                 </Text>
@@ -206,19 +281,19 @@ export default function ChallengeDetails() {
                 </Text>
                 <Text style={styles.smallDim}>★ {data.stats?.rating ?? 4.0}</Text>
               </View>
-            </View>
+            </Pressable>
 
             <View style={styles.statsRow}>
-              <Text style={styles.statItem}>👣 {mToKm(variant?.distanceMeters)}</Text>
-              <Text style={styles.statItem}>🔥 {variant?.calories ?? "—"} cal</Text>
+              <Text style={styles.statItem}>👣 {mToKm(statDistance)}</Text>
+              <Text style={styles.statItem}>🔥 {statCalories ?? "—"} cal</Text>
               <Text style={styles.statItem}>
-                <Ionicons name="time-outline" size={14} /> {variant?.estimatedTimeMin ?? "—"} min
+                <Ionicons name="time-outline" size={14} /> {statTime ?? "—"} min
               </Text>
-              <Text style={styles.statItem}>HIIT: {variant?.hiitType ?? "—"}</Text>
+              <Text style={styles.statItem}>HIIT: {statHiit ?? "—"}</Text>
             </View>
           </View>
 
-          {/* Connectivity */}
+          {/* Connectivity line */}
           <View style={styles.connectLine}>
             <Text style={styles.connectText}>
               Smartwatch: {data.info?.smartwatch ?? "Not Connected"}
@@ -229,130 +304,224 @@ export default function ChallengeDetails() {
             </Text>
           </View>
 
-          {/* Start Challenge */}
+          {/* CTA */}
           <Pressable style={styles.cta} onPress={handleStart}>
             <Text style={styles.ctaText}>Start Challenge</Text>
           </Pressable>
         </ScrollView>
+
+        {/* Story Picker (scrollable) */}
+        <Modal
+          visible={storyPickerOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setStoryPickerOpen(false)}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setStoryPickerOpen(false)}>
+            <View style={styles.modalSheet}>
+              <Text style={styles.modalTitle}>Choose a Story</Text>
+              <ScrollView style={{ maxHeight: 320 }}>
+                {stories.length === 0 ? (
+                  <Text style={styles.modalEmpty}>No stories found</Text>
+                ) : (
+                  stories.map((s) => {
+                    const active = s.id === selectedStoryId;
+                    return (
+                      <Pressable
+                        key={s.id}
+                        style={[styles.modalItem, active && styles.modalItemActive]}
+                        onPress={() => {
+                          setSelectedStoryId(s.id);
+                          setStoryPickerOpen(false);
+                        }}
+                      >
+                        <Text style={[styles.modalItemText, active && styles.modalItemTextActive]}>
+                          {s.title}
+                        </Text>
+                        <Text style={styles.modalItemMeta}>
+                          {mToKm(s.distanceMeters)} · {s.estimatedTimeMin ?? "—"} min
+                        </Text>
+                      </Pressable>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
+          </Pressable>
+        </Modal>
       </SafeAreaView>
     </ImageBackground>
   );
 }
 
+/* ---------- Styles ---------- */
+const SKY_50 = "#EFF6FF";
+const SKY_100 = "#DBEAFE";
+const SKY_200 = "#BFDBFE";
+const SKY_300 = "#93C5FD";
+const SKY_700 = "#1D4ED8";
+const AMBER_100 = "#FEF3C7";
 
 const styles = StyleSheet.create({
   bg: { flex: 1, width: "100%", height: "100%" },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.9)",
-  },
+
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+
   header: {
-    paddingTop: 10,
+    paddingTop: 6,
     paddingBottom: 10,
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
   },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.06)",
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
   },
-  titleTop: { fontSize: 22, fontWeight: "800", color: "#0C2E16" },
-  subtitle: { fontSize: 12, fontWeight: "600", color: "#4b5563" },
+  titleTop: { fontSize: 22, fontWeight: "800", color: "#0B3D1F" },
+  subtitle: { fontSize: 12, fontWeight: "700", color: "#2563EB" },
+
   tabs: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12, // more spacing between buttons
     paddingHorizontal: 12,
-    marginTop: 6,
+    marginTop: 8,
   },
   tabBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
     borderRadius: 9999,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: SKY_100, // sky
+    borderWidth: 1,
+    borderColor: SKY_200,
   },
-  tabActive: { backgroundColor: "#D1FAE5" },
-  tabText: { fontSize: 14, fontWeight: "700", color: "#374151" },
-  tabTextActive: { color: "#065F46" },
+  tabActive: { backgroundColor: SKY_300 },
+  tabText: { fontSize: 15, fontWeight: "800", color: "#1F2937" },
+  tabTextActive: { color: "white" },
+
   banner: {
-    margin: 12,
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: "#E5E7EB",
-  },
-  bannerTitle: { fontSize: 13, fontWeight: "800", color: "#111" },
-  bannerSub: { fontSize: 12, color: "#374151", marginTop: 4 },
-  rewardCard: {
     marginHorizontal: 12,
-    marginTop: 8,
+    marginTop: 12,
     borderRadius: 16,
     padding: 12,
-    backgroundColor: "rgba(255,255,255,0.95)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
-    alignItems: "center",
   },
-  rewardLabel: { fontSize: 12, color: "#374151", marginBottom: 6 },
-  rewardPet: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
-  rewardPetName: { fontSize: 16, fontWeight: "800", color: "#111" },
-  pointsPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 9999,
+  bannerBefore: {
+    backgroundColor: SKY_50,
+    borderColor: SKY_200,
   },
-  pointsText: { fontSize: 12, fontWeight: "800", color: "#111" },
-  statsCard: {
+  bannerRequired: {
+    backgroundColor: AMBER_100,
+    borderColor: "#FCD34D",
+  },
+  bannerTitle: { fontSize: 13, fontWeight: "900", color: "#111827" },
+  bannerSub: { fontSize: 12, color: "#374151", marginTop: 6 },
+
+  rewardCard: {
     marginHorizontal: 12,
     marginTop: 10,
     borderRadius: 16,
+    padding: 14,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderWidth: 1,
+    borderColor: SKY_200,
+    alignItems: "center",
+    gap: 8,
+  },
+  rewardLabel: { fontSize: 12, color: "#374151", fontWeight: "800" },
+  rewardPet: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rewardPetName: { fontSize: 16, fontWeight: "900", color: "#0B3D1F" },
+  pointsPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: SKY_100,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: SKY_200,
+  },
+  pointsText: { fontSize: 12, fontWeight: "900", color: "#0B3D1F" },
+
+  statsCard: {
+    marginHorizontal: 12,
+    marginTop: 12,
+    borderRadius: 16,
     padding: 12,
     backgroundColor: "rgba(255,255,255,0.95)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
+    borderColor: SKY_200,
   },
   statsHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  statsTitle: { fontSize: 14, fontWeight: "700", color: "#0C2E16" },
-  smallDim: { fontSize: 12, color: "#4b5563" },
-  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
-  statItem: { fontSize: 12, color: "#111" },
+  statsTitle: { fontSize: 15, fontWeight: "900", color: "#0B3D1F" },
+  smallDim: { fontSize: 12, color: "#4B5563" },
+  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
+  statItem: { fontSize: 13, color: "#111827" },
+
   connectLine: {
     marginHorizontal: 12,
-    marginTop: 8,
-    padding: 10,
-    borderRadius: 12,
-    backgroundColor: "#F3F4F6",
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: SKY_50,
+    borderWidth: 1,
+    borderColor: SKY_200,
     flexDirection: "row",
     justifyContent: "space-between",
   },
-  connectText: { fontSize: 11, color: "#1f2937", fontWeight: "600" },
+  connectText: { fontSize: 12, color: "#0B3D1F", fontWeight: "700" },
+
   cta: {
     marginHorizontal: 16,
-    marginTop: 14,
+    marginTop: 16,
     backgroundColor: "#BEE3BF",
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 16,
+    borderRadius: 18,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
+    borderColor: "rgba(0,0,0,0.12)",
   },
   ctaText: { fontSize: 16, fontWeight: "900", color: "#0b3d1f" },
+
+  // Picker modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: "white",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  modalTitle: { fontSize: 16, fontWeight: "900", color: "#0B3D1F", marginBottom: 10 },
+  modalEmpty: { fontSize: 13, color: "#4B5563", paddingVertical: 10 },
+  modalItem: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E5E7EB",
+  },
+  modalItemActive: { backgroundColor: SKY_50 },
+  modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
+  modalItemTextActive: { color: SKY_700 },
+  modalItemMeta: { fontSize: 12, color: "#4B5563", marginTop: 2 },
 });
 
 const safeAreaStyle = {
   flex: 1,
   paddingHorizontal: 16,
-  paddingTop: Platform.OS === 'ios' ? 12 : 8,
+  paddingTop: Platform.OS === "ios" ? 12 : 10,
 };
