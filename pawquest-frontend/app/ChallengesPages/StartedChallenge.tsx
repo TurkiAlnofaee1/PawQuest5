@@ -10,7 +10,7 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
-const bgImage = require("../../../assets/images/ImageBackground.jpg"); // adjust if needed
+const bgImage = require("../../assets/images/ImageBackground.jpg"); // adjust if needed
 
 export default function StartedChallenge() {
   const router = useRouter();

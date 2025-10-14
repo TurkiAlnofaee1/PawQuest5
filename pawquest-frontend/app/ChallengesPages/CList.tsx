@@ -1,11 +1,11 @@
 // app/CList.tsx
 import React from "react";
-import { View, Text, StyleSheet, ImageBackground, Pressable } from "react-native";
+import { View, Text, StyleSheet, ImageBackground, Pressable, SafeAreaView, Platform } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import CListCore from "./CListCore";
 
-const bgImage = require("../../../assets/images/ImageBackground.jpg");
+const bgImage = require("../../assets/images/ImageBackground.jpg");
 
 export default function CList() {
   const router = useRouter();
@@ -13,17 +13,15 @@ export default function CList() {
   const headerTitle = name ? `${name} Challenges` : "Challenges";
 
   return (
-    <ImageBackground source={bgImage} style={{ flex: 1 }} resizeMode="cover">
+    <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <Stack.Screen options={{ headerShown: false }} />
-
-      <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.88)" }}>
+      <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <Pressable onPress={() => router.push("/(tabs)/challenges")} style={styles.backBtn}>
             <Ionicons name="chevron-back" size={20} />
           </Pressable>
           <Text style={styles.h1}>{headerTitle}</Text>
         </View>
-
         {category ? (
           <CListCore
             category={String(category)}
@@ -40,12 +38,14 @@ export default function CList() {
             <Text>No category provided.</Text>
           </View>
         )}
-      </View>
+      </SafeAreaView>
     </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  bg: { flex: 1, width: '100%', height: '100%' },
+  safeArea: { flex: 1, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 12 : 8 },
   header: {
     paddingTop: 14,
     paddingBottom: 10,

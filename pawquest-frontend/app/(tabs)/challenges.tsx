@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable, ImageBackground, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, FlatList, Pressable, ImageBackground, ActivityIndicator, SafeAreaView, Platform } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { db } from "../../src/lib/firebase";
@@ -57,7 +57,7 @@ export default function Challenges() {
     <Pressable
       onPress={() =>
         router.push({
-          pathname: "/(tabs)/ChallengesPages/CList",
+          pathname: "/ChallengesPages/CList",
           params: { category: item.id, name: item.name },
         })
       }
@@ -75,7 +75,7 @@ export default function Challenges() {
 
   return (
     <ImageBackground source={bgImage} style={styles.background} resizeMode="cover">
-      <View style={styles.overlay}>
+      <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <Text style={styles.h1}>Challenges</Text>
           <Text style={styles.h2}>Challenges Available: {total}</Text>
@@ -94,18 +94,18 @@ export default function Challenges() {
         )}
 
         {/* Optional quick CTA; remove if you don’t have this route */}
-        <Pressable onPress={() => router.push("/(tabs)/quick")} style={({ pressed }) => [styles.quickBtn, pressed && { opacity: 0.92 }]}>
+        <Pressable onPress={() => router.push("/(tabs)/quick")} style={({ pressed }) => [styles.quickBtn, pressed && { opacity: 0.92 }]}> 
           <Text style={styles.quickText}>Quick Challenge</Text>
           <Ionicons name="play" size={18} />
         </Pressable>
-      </View>
+      </SafeAreaView>
     </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   background: { flex: 1, width: "100%", height: "100%" },
-  overlay: { flex: 1, backgroundColor: "rgba(255,255,255,0.85)" },
+  safeArea: { flex: 1, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 12 : 8 },
   header: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 10 },
   h1: { fontSize: 28, fontWeight: "800", color: "#0C2E16" },
   h2: { marginTop: 4, fontSize: 14, fontWeight: "600", color: "rgba(0,0,0,0.75)" },

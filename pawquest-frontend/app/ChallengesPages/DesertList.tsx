@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Stack, useRouter } from "expo-router";
 import CListCore from "./CListCore";
 
-const bgImage = require("../../../assets/images/ImageBackground.jpg");
+const bgImage = require("../../assets/images/ImageBackground.jpg");
 
 export default function DesertList() {
   const router = useRouter();
