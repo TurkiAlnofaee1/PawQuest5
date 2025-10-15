@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { router, useRouter } from 'expo-router';
 import React from 'react';
 import { StyleSheet, ImageBackground, SafeAreaView, View, Text, TouchableOpacity, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -112,7 +112,12 @@ const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
           <Text style={[styles.statsLabel, { color: mutedColor }]}>Steps</Text>
         </View>
       </View>
-      <TouchableOpacity testID="stats-chevron" style={styles.statsChevron} activeOpacity={1}>
+      <TouchableOpacity
+  testID="stats-chevron"
+  style={styles.statsChevron}
+  activeOpacity={0.7}
+  onPress={() => router.push('/steps')}
+>
         <MaterialCommunityIcons name="chevron-right" size={24} color={mutedColor} />
       </TouchableOpacity>
     </View>
