@@ -386,7 +386,11 @@ export default function MapScreen() {
           loading={routeLoading}
           onCapture={() => {
             audioRef.current?.fadeOut();
-            router.push("/");
+            if (challengeId) {
+              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: { challengeId } });
+            } else {
+              router.push("/ChallengesPages/ARPetScreen");
+            }
           }}
         />
       )}
