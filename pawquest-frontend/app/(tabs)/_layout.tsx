@@ -14,14 +14,33 @@ export default function TabLayout() {
     <Tabs
       initialRouteName="index"
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarShowLabel: false,
-        
+        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+
+        // ✨ key fixes for spacing
         tabBarStyle: Platform.select({
-          ios: { position: 'absolute' },
-          default: {},
+          ios: {
+            position: 'absolute',
+            height: 60,
+            paddingHorizontal: 0,  // remove side padding
+            marginHorizontal: 0,   // remove side margin
+            borderTopWidth: 0,
+          },
+          default: {
+            height: 60,
+            paddingHorizontal: 0,
+            marginHorizontal: 0,
+            borderTopWidth: 0,
+          },
         }),
+
+        // make each tab take equal width so no extra gap on the right
+        tabBarItemStyle: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
       }}
     >
       {/* ===== Main 5 tabs ===== */}
@@ -33,95 +52,6 @@ export default function TabLayout() {
         }}
       />
 
-      <Tabs.Screen
-        name="ChallengesPages/StartedChallenge"
-        options={{
-          title: 'Started Challenge',
-          tabBarStyle: { display: 'none' },
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-      
-
-      <Tabs.Screen
-        name="ChallengesPages/CList"
-        options={{
-          title: 'ChallengesClist',
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-
-
-
-      <Tabs.Screen
-        name="ChallengesPages/CListCore"
-        options={{
-          title: 'CListCore',
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-
-
-      <Tabs.Screen
-        name="ChallengesPages/ChallengeDetails"
-        options={{
-          title: 'Challenge Details',
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-
-
-      
-
-
-      <Tabs.Screen
-        name="ChallengesPages/MountainList"
-        options={{
-          title: 'Mountain Challenge',
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-
-
-
-      <Tabs.Screen
-        name="ChallengesPages/DesertList"
-        options={{
-          title: 'Desert Challenge',
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="ChallengesPages/CityList"
-        options={{
-          title: 'City Challenge',
-          tabBarButton: () => null,
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
-        }}
-      />
-
-       <Tabs.Screen
-        name="ChallengesPages/SeaList"
-        options={{
-          title: 'Challengeshh',
-          tabBarButton: () => null, // hide it from the bottom tab bar
-          tabBarIcon: ({ color }) => (
-            <MaterialCommunityIcons
-              size={28}
-              name="sword"
-              color={color}
-              style={{ transform: [{ scaleX: -1 }] }}
-            />
-            
-          ),
-        }}
-      />
       <Tabs.Screen
         name="challenges"
         options={{
@@ -136,6 +66,7 @@ export default function TabLayout() {
           ),
         }}
       />
+
       <Tabs.Screen
         name="index"
         options={{
@@ -143,6 +74,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
+
       <Tabs.Screen
         name="petinventory"
         options={{
@@ -151,7 +83,6 @@ export default function TabLayout() {
         }}
       />
 
-      
       <Tabs.Screen
         name="leaderboard"
         options={{
@@ -162,9 +93,18 @@ export default function TabLayout() {
         }}
       />
 
-      {/* ===== Hide non-tab routes so they don't appear in the bar ===== */}
+      {/* Hidden screens keep working but don't render a tab button */}
+      <Tabs.Screen name="settings" options={{ href: null }} />
       <Tabs.Screen name="quick" options={{ href: null }} />
       <Tabs.Screen name="ChallengesPages" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/StartedChallenge" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/CList" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/CListCore" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/ChallengeDetails" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/MountainList" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/DesertList" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/CityList" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/SeaList" options={{ href: null }} />
       <Tabs.Screen name="*" options={{ href: null }} />
     </Tabs>
   );
