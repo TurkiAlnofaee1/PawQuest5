@@ -1,4 +1,3 @@
-// app/experience-new/story.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -10,6 +9,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import TopBar from '@/components/TopBar';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
@@ -22,8 +22,10 @@ export default function StoryFormScreen() {
       {/* Full-bleed background */}
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
 
+      {/* Top header (left-aligned title + back arrow to Settings) */}
+      <TopBar title="Create an experiance  +" backTo="/(tabs)/settings" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* Segmented header: Story active */}
+        {/* Segments: Story active */}
         <View style={styles.segmentWrap}>
           <View style={[styles.segmentPill, { opacity: 0.7 }]}>
             <Text style={[styles.segmentText, { opacity: 0.7 }]}>Challenge</Text>
@@ -73,9 +75,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     backgroundColor: '#000', // fallback behind the image
   },
-  bg: {
-    ...StyleSheet.absoluteFillObject,
-  },
+  bg: { ...StyleSheet.absoluteFillObject },
   scroll: {
     flexGrow: 1,
     padding: 16,
@@ -84,8 +84,7 @@ const styles = StyleSheet.create({
   },
 
   // headings
-  headerTitle: { fontSize: 26, fontWeight: '900', color: '#111', marginBottom: 12 },
-  formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 6, marginBottom: 8 },
+  formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 10, marginBottom: 10 },
 
   // segmented header
   segmentWrap: {
