@@ -134,17 +134,18 @@ const Home: React.FC = () => {
         <View style={styles.topBarRow}>
           {/* Settings button → opens /settings */}
           <TouchableOpacity
-            testID="icon-settings"
-            hitSlop={16}
-            accessibilityLabel="Open settings"
-            onPress={() => router.push('/settings')}
-          >
-            <MaterialCommunityIcons
-              name="cog-outline"
-              size={28}
-              color={iconColor}
-            />
-          </TouchableOpacity>
+  testID="icon-settings"
+  hitSlop={16}
+  accessibilityLabel="Open settings"
+  onPress={() => router.push('/(tabs)/settings')}  // 👈 add this line
+>
+  <MaterialCommunityIcons
+    name="cog-outline"
+    size={28}
+    color={iconColor}
+  />
+</TouchableOpacity>
+
 
           <Text style={[styles.topBarTitle, { color: textColor }]}>Home</Text>
 

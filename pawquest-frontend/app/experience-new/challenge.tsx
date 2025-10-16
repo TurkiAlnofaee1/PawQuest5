@@ -1,4 +1,3 @@
-// app/experience-new/challenge.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -10,6 +9,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import TopBar from '@/components/TopBar';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
@@ -33,13 +33,14 @@ export default function ChallengeFormScreen() {
 
   return (
     <View style={styles.root}>
-      {/* full-bleed background */}
+      {/* Full-bleed background */}
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
 
-      {/* content */}
+      {/* Top header (left-aligned title + back arrow to Settings) */}
+      <TopBar title="Create an experiance  +" backTo="/(tabs)/settings" />
+      {/* Content */}
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        
-        {/* Segmented header: Challenge active */}
+        {/* Segments: Challenge active */}
         <View style={styles.segmentWrap}>
           <View style={[styles.segmentPill, styles.segmentActive]}>
             <Text style={[styles.segmentText, styles.segmentTextActive]}>Challenge</Text>
@@ -135,16 +136,7 @@ export default function ChallengeFormScreen() {
 
         {/* Row 3: Location | Suggested Rewards */}
         <View style={styles.row}>
-          <View style={styles.col}>
-            <Text style={styles.label}>Location</Text>
-            <TextInput
-              style={[styles.input, styles.elevated]}
-              placeholder="Example: Al-Safaa"
-              placeholderTextColor="#6A6A6A"
-              value={loc2}
-              onChangeText={setLoc2}
-            />
-          </View>
+         
           <View style={styles.col}>
             <Text style={styles.label}>Suggested Rewards</Text>
             <TextInput
@@ -174,18 +166,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#000', // fallback behind the image
   },
   bg: {
-    ...StyleSheet.absoluteFillObject, // fills the entire viewport
+    ...StyleSheet.absoluteFillObject,
   },
   scroll: {
     flexGrow: 1,
     padding: 16,
-    paddingBottom: 96, // keep submit above bottom tabs on phones/web
+    paddingBottom: 96, // keep Submit above bottom tabs
     rowGap: 8,
   },
 
   // headings
-  headerTitle: { fontSize: 26, fontWeight: '900', color: '#111', marginBottom: 12 },
-  formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 6, marginBottom: 8 },
+  formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 10, marginBottom: 10 },
 
   // segmented header
   segmentWrap: {
