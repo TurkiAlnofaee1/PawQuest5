@@ -1,19 +1,40 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable, ImageBackground, ActivityIndicator, SafeAreaView, Platform } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Pressable,
+  ImageBackground,
+  ActivityIndicator,
+  SafeAreaView,
+  Platform,
+} from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { db } from "../../src/lib/firebase";
-import { collection, getDocs, FirestoreDataConverter, QueryDocumentSnapshot } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  FirestoreDataConverter,
+  QueryDocumentSnapshot,
+} from "firebase/firestore";
 
 const bgImage = require("../../assets/images/ImageBackground.jpg");
 
-type Category = { id: string; name: string; color: string; icon?: string; totalChallenges: number; };
+type Category = {
+  id: string;
+  name: string;
+  color: string;
+  icon?: string;
+  totalChallenges: number;
+};
 
 const FALLBACK: Category[] = [
-  { id: "city", name: "City", color: "#A5E1D2", icon: "🦅", totalChallenges: 0 },
-  { id: "mountain", name: "Mountain", color: "#F5A6A0", icon: "🐆", totalChallenges: 0 },
-  { id: "desert", name: "Desert", color: "#F6E3A2", icon: "🐉", totalChallenges: 0 },
-  { id: "sea", name: "Sea", color: "#8DC2FF", icon: "🐲", totalChallenges: 0 },
+  { id: "city", name: "City", color: "#4aa3be", icon: "🏙️", totalChallenges: 0 },
+  { id: "mountain", name: "Mountain", color: "#20b07b", icon: "⛰️", totalChallenges: 0 },
+  { id: "desert", name: "Desert", color: "#ff8a2a", icon: "🏜️", totalChallenges: 0 },
+  { id: "sea", name: "Sea", color: "#2e6ddf", icon: "🌊", totalChallenges: 0 },
 ];
 
 const converter: FirestoreDataConverter<Category> = {
@@ -23,12 +44,20 @@ const converter: FirestoreDataConverter<Category> = {
     return {
       id: snap.id,
       name: String(d?.name ?? ""),
-      color: String(d?.color ?? "#EEE"),
+      color: String(d?.color ?? "#4aa3be"),
       icon: typeof d?.icon === "string" ? d.icon : undefined,
       totalChallenges: Number(d?.totalChallenges ?? 0),
     };
   },
 };
+
+// fade helper — 60% visible color (slightly faded)
+function fadeColor(hex: string, opacity = 0.6) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
 
 export default function Challenges() {
   const router = useRouter();
@@ -51,7 +80,10 @@ export default function Challenges() {
     })();
   }, []);
 
-  const total = items.reduce((a, c) => a + (Number.isFinite(c.totalChallenges) ? c.totalChallenges : 0), 0);
+  const total = items.reduce(
+    (a, c) => a + (Number.isFinite(c.totalChallenges) ? c.totalChallenges : 0),
+    0
+  );
 
   const renderItem = ({ item }: { item: Category }) => (
     <Pressable
@@ -61,42 +93,65 @@ export default function Challenges() {
           params: { category: item.id, name: item.name },
         })
       }
-      style={({ pressed }) => [styles.card, { backgroundColor: item.color, opacity: pressed ? 0.92 : 1 }]}
+      style={({ pressed }) => [
+        styles.card,
+        {
+          backgroundColor: fadeColor(item.color, pressed ? 0.55 : 0.6),
+          borderColor: fadeColor(item.color, 0.75),
+        },
+      ]}
     >
-      <View style={{ flex: 1, gap: 6 }}>
+      <View style={styles.cardText}>
         <Text style={styles.cardTitle}>{item.name} Challenges</Text>
-        <Text style={styles.cardSub}>Challenges Available: {item.totalChallenges ?? 0}</Text>
+        <Text style={styles.cardSub}>
+          Challenges Available: {item.totalChallenges ?? 0}
+        </Text>
       </View>
-      <View style={styles.cardRight}>
-        {item.icon ? <Text style={{ fontSize: 36 }}>{item.icon}</Text> : <MaterialCommunityIcons name="paw" size={44} color="rgba(0,0,0,0.65)"/>}
+
+      <View style={styles.cardIconWrap}>
+        {item.icon ? (
+          <Text style={styles.cardEmoji}>{item.icon}</Text>
+        ) : (
+          <MaterialCommunityIcons name="paw" size={50} color="rgba(0,0,0,0.75)" />
+        )}
       </View>
     </Pressable>
   );
 
   return (
-    <ImageBackground source={bgImage} style={styles.background} resizeMode="cover">
-      <SafeAreaView style={styles.safeArea}>
+    <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+      <SafeAreaView style={styles.safe}>
+        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.h1}>Challenges</Text>
           <Text style={styles.h2}>Challenges Available: {total}</Text>
         </View>
 
+        {/* List */}
         {loading ? (
-          <View style={styles.loading}><ActivityIndicator size="large" /></View>
+          <View style={styles.loading}>
+            <ActivityIndicator size="large" />
+          </View>
         ) : (
           <FlatList
             data={items}
             keyExtractor={(i) => i.id}
             renderItem={renderItem}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
-            ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
+            contentContainerStyle={styles.listContent}
+            ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           />
         )}
 
-        {/* Optional quick CTA; remove if you don’t have this route */}
-        <Pressable onPress={() => router.push("/(tabs)/quick")} style={({ pressed }) => [styles.quickBtn, pressed && { opacity: 0.92 }]}> 
+        {/* Quick Challenge Button */}
+        <Pressable
+          onPress={() => router.push("/(tabs)/quick")}
+          style={({ pressed }) => [
+            styles.quickBtn,
+            pressed && { transform: [{ scale: 0.98 }] },
+          ]}
+        >
           <Text style={styles.quickText}>Quick Challenge</Text>
-          <Ionicons name="play" size={18} />
+          <Ionicons name="play" size={20} color="#0c2e16" />
         </Pressable>
       </SafeAreaView>
     </ImageBackground>
@@ -104,16 +159,82 @@ export default function Challenges() {
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1, width: "100%", height: "100%" },
-  safeArea: { flex: 1, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 12 : 8 },
-  header: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 10 },
-  h1: { fontSize: 28, fontWeight: "800", color: "#0C2E16" },
-  h2: { marginTop: 4, fontSize: 14, fontWeight: "600", color: "rgba(0,0,0,0.75)" },
+  bg: { flex: 1 },
+  safe: {
+    flex: 1,
+    paddingTop: Platform.OS === "ios" ? 10 : 6,
+  },
+
+  header: {
+    paddingTop: 10,
+    paddingBottom: 6,
+    paddingHorizontal: 20,
+  },
+  h1: { fontSize: 35, fontWeight: "900", color: "#000000ff" },
+  h2: {
+    marginTop: 2,
+    paddingHorizontal: 4,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "rgba(0, 0, 0, 0.75)",
+  },
+
+  listContent: {
+    paddingTop: 12,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
+    gap: 10,
+  },
+
+  card: {
+    minHeight: 115,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    borderWidth: 1,
+  },
+  cardText: { flex: 1, gap: 6 },
+  cardTitle: { fontSize: 20, fontWeight: "900", color: "#0b1d22" },
+  cardSub: { fontSize: 15, fontWeight: "600", color: "rgba(0,0,0,0.85)" },
+
+  cardIconWrap: {
+    width: 70,
+    height: 70,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.3)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardEmoji: { fontSize: 42, lineHeight: 46 },
+
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
-  card: { minHeight: 88, borderRadius: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.10)", paddingHorizontal: 14, paddingVertical: 12, flexDirection: "row", alignItems: "center" },
-  cardTitle: { fontSize: 18, fontWeight: "800", color: "#1A1A1A" },
-  cardSub: { fontSize: 13.5, color: "rgba(0,0,0,0.75)", fontWeight: "600" },
-  cardRight: { width: 64, height: 64, alignItems: "center", justifyContent: "center" },
-  quickBtn: { marginHorizontal: 16, marginTop: 8, marginBottom: 64, backgroundColor: "#CBE7B7", borderRadius: 16, paddingVertical: 14, paddingHorizontal: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.10)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
-  quickText: { fontWeight: "800", fontSize: 15, color: "#1B3D1F" },
+
+  quickBtn: {
+    marginTop: 10,
+    marginBottom: 60,
+    marginHorizontal: 20,
+    backgroundColor: "#BEE3BF",
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: "rgba(0,0,0,0.1)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  quickText: { fontWeight: "900", fontSize: 17, color: "#0c2e16" },
 });

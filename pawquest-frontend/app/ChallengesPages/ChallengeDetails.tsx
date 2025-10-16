@@ -1,4 +1,4 @@
-// app/(tabs)/ChallengesPages/ChallengeDetails.tsx
+// app/ChallengesPages/ChallengeDetails.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -24,9 +24,26 @@ import {
   QueryDocumentSnapshot,
 } from "firebase/firestore";
 
-const bgImage = require("../../assets/images/ImageBackground.jpg");
+/* ------------------------ category backgrounds ------------------------ */
+const defaultBg = require("../../assets/images/ImageBackground.jpg");
+const bgByCategory: Record<string, any> = {
+  city: require("../../assets/images/Al-Balad.jpg"),
+  mountain: require("../../assets/images/ImageBackground.jpg"),
+  desert: require("../../assets/images/Dune.jpg"),
+  sea: require("../../assets/images/ImageBackground.jpg"),
+};
 
-/* ---------- Types ---------- */
+/* ------------------------ category palettes ------------------------ */
+const PALETTES = {
+  city:    { light: "#E8F1FF", mid: "#C7DAFF", strong: "#3B82F6", textOnStrong: "#FFFFFF" },
+  mountain:{ light: "#EAF8F2", mid: "#C9F0E0", strong: "#10B981", textOnStrong: "#0B281C" },
+  desert:  { light: "#FFF3E7", mid: "#FAD9BB", strong: "#FB923C", textOnStrong: "#2E1A09" },
+  sea:     { light: "#EAF2FF", mid: "#C8D8FF", strong: "#2563EB", textOnStrong: "#FFFFFF" },
+} as const;
+const getPalette = (cat?: string) =>
+  PALETTES[(cat || "city").toLowerCase() as keyof typeof PALETTES] ?? PALETTES.city;
+
+/* ----------------------------- types ----------------------------- */
 type Variant = {
   xp: number;
   distanceMeters: number;
@@ -34,7 +51,6 @@ type Variant = {
   calories: number;
   steps: number;
   hiitType?: string;
-  smartwatchRequired?: boolean;
 };
 
 type Story = {
@@ -55,14 +71,13 @@ type ChallengeDoc = {
   completedCount?: number;
   variants?: { easy?: Variant; hard?: Variant };
   stats?: { storyPlays?: number; challengePlays?: number; rating?: number };
-  info?: { smartwatch?: string; gps?: string; headphones?: string };
 };
 
-/* ---------- Helpers ---------- */
+/* --------------------------- helpers --------------------------- */
 const mToKm = (m?: number) =>
   typeof m === "number" ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : "—";
 
-/* ---------- Component ---------- */
+/* -------------------------- component -------------------------- */
 export default function ChallengeDetails() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -94,7 +109,7 @@ export default function ChallengeDetails() {
           if (d.variants?.hard && !d.variants?.easy) setTab("hard");
         }
 
-        // stories subcollection (optional)
+        // optional stories subcollection
         const sref = collection(db, "challenges", String(id), "stories");
         const ssnap = await getDocs(sref);
         const list: Story[] = ssnap.docs.map((d: QueryDocumentSnapshot) => {
@@ -102,10 +117,8 @@ export default function ChallengeDetails() {
           return {
             id: d.id,
             title: String(raw?.title ?? "Untitled"),
-            distanceMeters:
-              typeof raw?.distanceMeters === "number" ? raw.distanceMeters : undefined,
-            estimatedTimeMin:
-              typeof raw?.estimatedTimeMin === "number" ? raw.estimatedTimeMin : undefined,
+            distanceMeters: typeof raw?.distanceMeters === "number" ? raw.distanceMeters : undefined,
+            estimatedTimeMin: typeof raw?.estimatedTimeMin === "number" ? raw.estimatedTimeMin : undefined,
             calories: typeof raw?.calories === "number" ? raw.calories : undefined,
             hiitType: typeof raw?.hiitType === "string" ? raw.hiitType : undefined,
           };
@@ -113,7 +126,6 @@ export default function ChallengeDetails() {
 
         if (active) {
           setStories(list);
-          // default to first story if exists
           if (list.length > 0) setSelectedStoryId(list[0].id);
         }
       } catch (e) {
@@ -127,10 +139,11 @@ export default function ChallengeDetails() {
     };
   }, [id]);
 
-  const variant: Variant | undefined = useMemo(
-    () => data?.variants?.[tab],
-    [data, tab]
-  );
+  const effectiveCategory = (category || data?.categoryId || "city").toString().toLowerCase();
+  const pal = getPalette(effectiveCategory);
+  const bgSource = bgByCategory[effectiveCategory] ?? defaultBg;
+
+  const variant: Variant | undefined = useMemo(() => data?.variants?.[tab], [data, tab]);
 
   const selectedStory = useMemo(
     () => stories.find((s) => s.id === selectedStoryId) || null,
@@ -149,17 +162,17 @@ export default function ChallengeDetails() {
       params: {
         challengeId: String(id),
         title: data?.title || title || "Challenge",
-        category: category || data?.categoryId || "",
+        category: effectiveCategory,
         difficulty: tab,
         storyId: selectedStory?.id ?? "",
       },
     });
   };
 
-  /* ---------- Loading / Not found ---------- */
+  /* ------------------ loading / not found ------------------ */
   if (loading) {
     return (
-      <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+      <ImageBackground source={bgSource} style={styles.bg} resizeMode="cover">
         <SafeAreaView style={safeAreaStyle}>
           <Stack.Screen options={{ headerShown: false }} />
           <View style={styles.center}>
@@ -172,7 +185,7 @@ export default function ChallengeDetails() {
 
   if (!data) {
     return (
-      <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+      <ImageBackground source={bgSource} style={styles.bg} resizeMode="cover">
         <SafeAreaView style={safeAreaStyle}>
           <Stack.Screen options={{ headerShown: false }} />
           <View style={styles.center}>
@@ -183,31 +196,36 @@ export default function ChallengeDetails() {
     );
   }
 
-  /* ---------- UI ---------- */
+  /* ------------------------------ UI ------------------------------ */
   return (
-    <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
+    <ImageBackground source={bgSource} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={safeAreaStyle}>
         <Stack.Screen options={{ headerShown: false }} />
 
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 28 + insets.bottom }}
+          contentContainerStyle={{ paddingBottom: 140 + insets.bottom }} // leave room for fixed footer CTA
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
           <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <Pressable
+              onPress={() => router.back()}
+              style={[styles.backBtn, { backgroundColor: "rgba(255,255,255,0.9)" }]}
+            >
               <Ionicons name="chevron-back" size={22} color="#0B3D1F" />
             </Pressable>
             <View style={{ flex: 1 }}>
-              <Text style={styles.titleTop}>{data.title || title || "Challenge"}</Text>
-              <Text style={styles.subtitle}>
-                {category ? String(category).toUpperCase() : ""}
+              <Text style={[styles.titleTop, { color: pal.textOnStrong }]} numberOfLines={1}>
+                {data.title || title || "Challenge"}
+              </Text>
+              <Text style={[styles.subtitle, { color: pal.textOnStrong }]}>
+                {effectiveCategory.toUpperCase()}
               </Text>
             </View>
           </View>
 
-          {/* Tabs — spaced out a bit more */}
+          {/* Tabs */}
           <View style={styles.tabs}>
             {(["easy", "hard"] as const).map((t) => {
               const enabled = Boolean(data.variants?.[t]);
@@ -219,11 +237,11 @@ export default function ChallengeDetails() {
                   onPress={() => setTab(t)}
                   style={[
                     styles.tabBtn,
-                    active && styles.tabActive,
+                    { backgroundColor: active ? pal.strong : pal.light, borderColor: pal.mid },
                     !enabled && { opacity: 0.45 },
                   ]}
                 >
-                  <Text style={[styles.tabText, active && styles.tabTextActive]}>
+                  <Text style={[styles.tabText, { color: active ? pal.textOnStrong : "#1F2937" }]}>
                     {t[0].toUpperCase() + t.slice(1)}
                   </Text>
                 </Pressable>
@@ -231,58 +249,46 @@ export default function ChallengeDetails() {
             })}
           </View>
 
-          {/* Banner (different colors) */}
-          {variant?.smartwatchRequired ? (
-            <View style={[styles.banner, styles.bannerRequired]}>
-              <Text style={styles.bannerTitle}>Smartwatch required</Text>
-              <Text style={styles.bannerSub}>
-                This level needs a connected smartwatch to track heart rate or HIIT workout.
-              </Text>
-            </View>
-          ) : (
-            <View style={[styles.banner, styles.bannerBefore]}>
-              <Text style={styles.bannerTitle}>BEFORE YOU START</Text>
-              <Text style={styles.bannerSub}>
-                For best results, connect a smartwatch and headphones.
-              </Text>
-            </View>
-          )}
+          {/* (Smartwatch banner removed by request) */}
 
-          {/* Reward card */}
-          <View style={styles.rewardCard}>
+          {/* BIG Rewards Card (square-ish feature) */}
+          <View
+            style={[
+              styles.rewardCard,
+              { borderColor: pal.mid, backgroundColor: "rgba(255,255,255,0.96)" },
+            ]}
+          >
             <Text style={styles.rewardLabel}>Rewards</Text>
-            <View style={styles.rewardPet}>
-              <MaterialCommunityIcons name="bird" size={36} color="#0B3D1F" />
-              <Text style={styles.rewardPetName}>{data.rewardPet ?? "—"}</Text>
+            <View style={styles.rewardSquare}>
+              <MaterialCommunityIcons name="bird" size={72} color="#0B3D1F" />
             </View>
-            <View style={styles.pointsPill}>
+            <Text style={styles.rewardPetName}>{data.rewardPet ?? "—"}</Text>
+            <View style={[styles.pointsPill, { backgroundColor: pal.light, borderColor: pal.mid }]}>
               <Text style={styles.pointsText}>{variant?.xp ?? 0} points</Text>
             </View>
           </View>
 
-          {/* Stats card with Story picker */}
-          <View style={styles.statsCard}>
-            {/* Story header line */}
-            <Pressable
-              style={styles.statsHeader}
-              onPress={() => setStoryPickerOpen(true)}
-            >
-              <Text style={styles.statsTitle}>
-                {selectedStory?.title ?? "Choose a Story"}{" "}
-                <Text style={{ color: "#0B3D1F" }}>▾</Text>
-              </Text>
+          {/* Choose Story — its own bar */}
+          <Pressable
+            onPress={() => setStoryPickerOpen(true)}
+            style={[
+              styles.storyBar,
+              { backgroundColor: pal.light, borderColor: pal.mid },
+            ]}
+          >
+            <Text style={styles.storyBarText} numberOfLines={1}>
+              {selectedStory?.title ? `Story: ${selectedStory.title}` : "Choose a Story"}
+            </Text>
+            <Ionicons name="chevron-down" size={18} color="#0B3D1F" />
+          </Pressable>
 
-              <View style={{ flexDirection: "row", gap: 12 }}>
-                <Text style={styles.smallDim}>
-                  {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
-                </Text>
-                <Text style={styles.smallDim}>
-                  {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
-                </Text>
-                <Text style={styles.smallDim}>★ {data.stats?.rating ?? 4.0}</Text>
-              </View>
-            </Pressable>
-
+          {/* Stats/info card */}
+          <View
+            style={[
+              styles.statsCard,
+              { borderColor: pal.mid, backgroundColor: "rgba(255,255,255,0.96)" },
+            ]}
+          >
             <View style={styles.statsRow}>
               <Text style={styles.statItem}>👣 {mToKm(statDistance)}</Text>
               <Text style={styles.statItem}>🔥 {statCalories ?? "—"} cal</Text>
@@ -291,26 +297,31 @@ export default function ChallengeDetails() {
               </Text>
               <Text style={styles.statItem}>HIIT: {statHiit ?? "—"}</Text>
             </View>
+
+            <View style={[styles.divider, { backgroundColor: pal.mid }]} />
+
+            <View style={styles.metaRow}>
+              <Text style={styles.smallDim}>
+                {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
+              </Text>
+              <Text style={styles.smallDim}>
+                {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
+              </Text>
+              <Text style={styles.smallDim}>★ {data.stats?.rating ?? 4.0}</Text>
+            </View>
           </View>
 
-          {/* Connectivity line */}
-          <View style={styles.connectLine}>
-            <Text style={styles.connectText}>
-              Smartwatch: {data.info?.smartwatch ?? "Not Connected"}
-            </Text>
-            <Text style={styles.connectText}>GPS: {data.info?.gps ?? "Active"}</Text>
-            <Text style={styles.connectText}>
-              Headphones: {data.info?.headphones ?? "Connected"}
-            </Text>
-          </View>
+          {/* (Connectivity row removed by request) */}
+        </ScrollView>
 
-          {/* CTA */}
+        {/* Fixed footer CTA */}
+        <View style={[styles.footer, { paddingBottom: 12 + insets.bottom }]}>
           <Pressable style={styles.cta} onPress={handleStart}>
             <Text style={styles.ctaText}>Start Challenge</Text>
           </Pressable>
-        </ScrollView>
+        </View>
 
-        {/* Story Picker (scrollable) */}
+        {/* Story Picker */}
         <Modal
           visible={storyPickerOpen}
           transparent
@@ -335,7 +346,7 @@ export default function ChallengeDetails() {
                           setStoryPickerOpen(false);
                         }}
                       >
-                        <Text style={[styles.modalItemText, active && styles.modalItemTextActive]}>
+                        <Text style={[styles.modalItemText, active && { color: pal.strong }]}>
                           {s.title}
                         </Text>
                         <Text style={styles.modalItemMeta}>
@@ -354,14 +365,7 @@ export default function ChallengeDetails() {
   );
 }
 
-/* ---------- Styles ---------- */
-const SKY_50 = "#EFF6FF";
-const SKY_100 = "#DBEAFE";
-const SKY_200 = "#BFDBFE";
-const SKY_300 = "#93C5FD";
-const SKY_700 = "#1D4ED8";
-const AMBER_100 = "#FEF3C7";
-
+/* ----------------------------- styles ---------------------------- */
 const styles = StyleSheet.create({
   bg: { flex: 1, width: "100%", height: "100%" },
 
@@ -381,109 +385,82 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.85)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
   },
-  titleTop: { fontSize: 22, fontWeight: "800", color: "#0B3D1F" },
-  subtitle: { fontSize: 12, fontWeight: "700", color: "#2563EB" },
+  titleTop: { fontSize: 24, fontWeight: "900" },
+  subtitle: { fontSize: 12, fontWeight: "800", opacity: 0.9 },
 
-  tabs: {
-    flexDirection: "row",
-    gap: 12, // more spacing between buttons
-    paddingHorizontal: 12,
-    marginTop: 8,
-  },
-  tabBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 9999,
-    backgroundColor: SKY_100, // sky
-    borderWidth: 1,
-    borderColor: SKY_200,
-  },
-  tabActive: { backgroundColor: SKY_300 },
-  tabText: { fontSize: 15, fontWeight: "800", color: "#1F2937" },
-  tabTextActive: { color: "white" },
+  tabs: { flexDirection: "row", gap: 12, paddingHorizontal: 12, marginTop: 8 },
+  tabBtn: { paddingVertical: 10, paddingHorizontal: 18, borderRadius: 9999, borderWidth: 1 },
+  tabText: { fontSize: 15, fontWeight: "900" },
 
-  banner: {
-    marginHorizontal: 12,
-    marginTop: 12,
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-  },
-  bannerBefore: {
-    backgroundColor: SKY_50,
-    borderColor: SKY_200,
-  },
-  bannerRequired: {
-    backgroundColor: AMBER_100,
-    borderColor: "#FCD34D",
-  },
-  bannerTitle: { fontSize: 13, fontWeight: "900", color: "#111827" },
-  bannerSub: { fontSize: 12, color: "#374151", marginTop: 6 },
-
+  /* Big rewards feature card */
   rewardCard: {
     marginHorizontal: 12,
-    marginTop: 10,
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    borderWidth: 1,
-    borderColor: SKY_200,
+    marginTop: 12,
+    borderRadius: 20,
+    padding: 16,
     alignItems: "center",
-    gap: 8,
+    borderWidth: 1,
   },
-  rewardLabel: { fontSize: 12, color: "#374151", fontWeight: "800" },
-  rewardPet: { flexDirection: "row", alignItems: "center", gap: 10 },
-  rewardPetName: { fontSize: 16, fontWeight: "900", color: "#0B3D1F" },
+  rewardLabel: { fontSize: 12, color: "#374151", fontWeight: "800", marginBottom: 6 },
+  rewardSquare: {
+    width: 160,
+    height: 160,
+    borderRadius: 24,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rewardPetName: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#0B3D1F" },
   pointsPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: SKY_100,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 9999,
     borderWidth: 1,
-    borderColor: SKY_200,
   },
-  pointsText: { fontSize: 12, fontWeight: "900", color: "#0B3D1F" },
+  pointsText: { fontSize: 14, fontWeight: "900", color: "#0B3D1F" },
 
+  /* Standalone story bar */
+  storyBar: {
+    marginHorizontal: 12,
+    marginTop: 12,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  storyBarText: { fontSize: 16, fontWeight: "900", color: "#0B3D1F", flex: 1, marginRight: 10 },
+
+  /* Info card */
   statsCard: {
     marginHorizontal: 12,
     marginTop: 12,
     borderRadius: 16,
-    padding: 12,
-    backgroundColor: "rgba(255,255,255,0.95)",
+    padding: 14,
     borderWidth: 1,
-    borderColor: SKY_200,
   },
-  statsHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  statsTitle: { fontSize: 15, fontWeight: "900", color: "#0B3D1F" },
-  smallDim: { fontSize: 12, color: "#4B5563" },
   statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
-  statItem: { fontSize: 13, color: "#111827" },
+  statItem: { fontSize: 14, color: "#111827" },
+  divider: { height: 1, marginVertical: 12, opacity: 0.6 },
+  metaRow: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
+  smallDim: { fontSize: 12, color: "#4B5563" },
 
-  connectLine: {
-    marginHorizontal: 12,
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 14,
-    backgroundColor: SKY_50,
-    borderWidth: 1,
-    borderColor: SKY_200,
-    flexDirection: "row",
-    justifyContent: "space-between",
+  /* fixed footer CTA */
+  footer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    backgroundColor: "transparent",
   },
-  connectText: { fontSize: 12, color: "#0B3D1F", fontWeight: "700" },
-
   cta: {
-    marginHorizontal: 16,
-    marginTop: 16,
     backgroundColor: "#BEE3BF",
     paddingVertical: 16,
     borderRadius: 18,
@@ -514,9 +491,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#E5E7EB",
   },
-  modalItemActive: { backgroundColor: SKY_50 },
+  modalItemActive: { backgroundColor: "#EFF6FF" },
   modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
-  modalItemTextActive: { color: SKY_700 },
   modalItemMeta: { fontSize: 12, color: "#4B5563", marginTop: 2 },
 });
 

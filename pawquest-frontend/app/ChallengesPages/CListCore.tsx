@@ -1,4 +1,3 @@
-// app/(tabs)/CListCore.tsx
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -23,10 +22,11 @@ import {
 type Challenge = {
   id: string;
   title: string;
+  district?: string;
   description?: string;
   imageUrl?: string;
-  distanceMeters?: number;     // top-level for quick list info (usually mirrors "easy")
-  estimatedTimeMin?: number;   // top-level for quick list info (usually mirrors "easy")
+  distanceMeters?: number;
+  estimatedTimeMin?: number;
   difficulty?: "easy" | "hard";
   rewardPet?: string;
   completedCount?: number;
@@ -39,31 +39,37 @@ type Props = {
   onSelect?: (id: string, title: string) => void;
 };
 
+// Per-category card color (adjust to your palette)
+const CARD_COLORS: Record<string, string> = {
+  city:   "rgba(219, 216, 216, 0.95)",
+  mountain: "rgba(190, 227, 191, 0.95)",
+  desert: "rgba(255, 209, 164, 0.95)",
+  sea:    "rgba(180, 205, 255, 0.95)",
+};
+
 const converter: FirestoreDataConverter<Challenge> = {
   toFirestore: (c) => c as any,
   fromFirestore: (snap: QueryDocumentSnapshot) => {
     const d = snap.data() as any;
-    // Prefer variants.easy.estimatedTimeMin if present, else fallback to top-level
-    let estimatedTimeMin = undefined;
+
+    let estimatedTimeMin: number | undefined = undefined;
     if (typeof d?.variants?.easy?.estimatedTimeMin === "number") {
       estimatedTimeMin = d.variants.easy.estimatedTimeMin;
     } else if (typeof d?.estimatedTimeMin === "number") {
       estimatedTimeMin = d.estimatedTimeMin;
     }
+
     return {
       id: snap.id,
       title: String(d?.title ?? ""),
+      district: typeof d?.district === "string" ? d.district : undefined,
       description: typeof d?.description === "string" ? d.description : undefined,
       imageUrl: typeof d?.imageUrl === "string" ? d.imageUrl : undefined,
-      distanceMeters:
-        typeof d?.distanceMeters === "number" ? d.distanceMeters : undefined,
+      distanceMeters: typeof d?.distanceMeters === "number" ? d.distanceMeters : undefined,
       estimatedTimeMin,
-      difficulty: (["easy", "hard"] as const).includes(d?.difficulty)
-        ? d.difficulty
-        : undefined,
+      difficulty: (["easy", "hard"] as const).includes(d?.difficulty) ? d.difficulty : undefined,
       rewardPet: typeof d?.rewardPet === "string" ? d.rewardPet : undefined,
-      completedCount:
-        typeof d?.completedCount === "number" ? d.completedCount : 0,
+      completedCount: typeof d?.completedCount === "number" ? d.completedCount : 0,
       isLocked: Boolean(d?.isLocked),
     };
   },
@@ -101,18 +107,18 @@ export default function CListCore({ category, headerTitle, onSelect }: Props) {
   const renderItem = ({ item }: { item: Challenge }) => (
     <Pressable
       onPress={() => onSelect?.(item.id, item.title)}
-      style={({ pressed }) => [styles.card, pressed && { opacity: 0.95 }]}
+      style={({ pressed }) => [
+        styles.card,
+        { backgroundColor: CARD_COLORS[category] ?? "rgba(255,255,255,0.95)" },
+        pressed && { opacity: 0.96 },
+      ]}
     >
       <View style={styles.left}>
         <View style={styles.imageWrap}>
           {item.imageUrl ? (
             <Image source={{ uri: item.imageUrl }} style={styles.image} resizeMode="cover" />
           ) : (
-            <MaterialCommunityIcons
-              name="map-marker-path"
-              size={28}
-              color="rgba(0,0,0,0.7)"
-            />
+            <MaterialCommunityIcons name="map-marker-path" size={30} color="rgba(0,0,0,0.7)" />
           )}
         </View>
 
@@ -120,10 +126,18 @@ export default function CListCore({ category, headerTitle, onSelect }: Props) {
           <Text style={styles.title} numberOfLines={1}>
             {item.title}
           </Text>
+
+          {!!item.district && (
+            <Text style={styles.metaStrong} numberOfLines={1}>
+              <Ionicons name="location-outline" size={14} /> {item.district}
+            </Text>
+          )}
+
           <Text style={styles.meta}>
             <Ionicons name="walk-outline" size={14} /> {metersToKm(item.distanceMeters)} ·{" "}
             <Ionicons name="time-outline" size={14} /> {minutesText(item.estimatedTimeMin)}
           </Text>
+
           <Text style={styles.meta}>
             <Ionicons name="paw-outline" size={14} /> {item.rewardPet ?? "—"}
           </Text>
@@ -132,11 +146,11 @@ export default function CListCore({ category, headerTitle, onSelect }: Props) {
 
       {item.isLocked ? (
         <View style={styles.lockBadge}>
-          <Ionicons name="lock-closed-outline" size={16} />
+          <Ionicons name="lock-closed-outline" size={16} color="#111" />
           <Text style={styles.lockText}>Locked</Text>
         </View>
       ) : (
-        <Ionicons name="chevron-forward" size={18} />
+        <Ionicons name="chevron-forward" size={20} />
       )}
     </Pressable>
   );
@@ -165,7 +179,7 @@ export default function CListCore({ category, headerTitle, onSelect }: Props) {
       data={items}
       keyExtractor={(i) => i.id}
       renderItem={renderItem}
-      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+      contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
       ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
     />
   );
@@ -186,26 +200,33 @@ const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.10)",
-    backgroundColor: "#BEE3FF", // light blue
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    minHeight: 115,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  left: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
+  left: { flexDirection: "row", alignItems: "center", gap: 14, flex: 1 },
   imageWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
+    width: 68,
+    height: 68,
+    borderRadius: 14,
     backgroundColor: "rgba(0,0,0,0.06)",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   image: { width: "100%", height: "100%" },
-  title: { fontSize: 16, fontWeight: "800", color: "#111827" },
-  meta: { fontSize: 12.5, color: "#374151", marginTop: 2 },
+  title: { fontSize: 20, fontWeight: "900", color: "#0b1d22" },
+  metaStrong: { fontSize: 13.5, color: "#0f172a", marginTop: 2, fontWeight: "700" },
+  meta: { fontSize: 13.5, color: "#374151", marginTop: 2 },
 
   lockBadge: {
     flexDirection: "row",
