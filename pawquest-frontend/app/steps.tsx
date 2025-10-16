@@ -5,6 +5,8 @@ import * as Location from "expo-location";
 // Removed invalid Subscription import from expo-modules-core
 import type * as LocationTypes from "expo-location";
 
+const MAX_SPEED_MS = 5.56; // ~20 km/h — pause if speed > this
+
 export default function StepsScreen() {
   // live stats
   const [isStepAvailable, setIsStepAvailable] = useState<boolean | null>(null);
@@ -19,6 +21,10 @@ export default function StepsScreen() {
   // calories & distance
   const [distanceM, setDistanceM] = useState<number>(0);
   const [caloriesKcal, setCaloriesKcal] = useState<number>(0);
+
+  // pause control & warning
+  const [paused, setPaused] = useState<boolean>(false);
+  const [warning, setWarning] = useState<string | null>(null);
 
   // remember last cumulative steps from sensor
   const lastCumStepsRef = useRef<number>(0);
@@ -60,6 +66,7 @@ export default function StepsScreen() {
         lastCumStepsRef.current = currentCum;
 
         if (delta === 0) return;
+        if (paused) return; // ⛔ paused due to overspeed — ignore step increments
 
         // session total
         setTotalSteps((prev) => prev + delta);
@@ -74,18 +81,38 @@ export default function StepsScreen() {
       pedoSub.current?.remove?.();
       locSub.current?.remove?.();
     };
-  }, [stepLengthM]);
+  }, [stepLengthM, paused]);
 
-  // classify walking vs running
+  // Overspeed guard: show warning & pause counting if speed > MAX_SPEED_MS
+  useEffect(() => {
+    if (speed > MAX_SPEED_MS) {
+      setPaused(true);
+      setWarning(
+        `Speed ${(speed * 3.6).toFixed(1)} km/h exceeds ${(MAX_SPEED_MS * 3.6).toFixed(0)} km/h — pausing steps & distance`
+      );
+    } else {
+      setPaused(false);
+      setWarning(null);
+    }
+  }, [speed]);
+
+  // classify walking vs running (we DO NOT force idle on overspeed now)
   useEffect(() => {
     const s = speed || 0;
     let mode: "idle" | "walking" | "running" = "idle";
-    if (s >= 0.8 && s < 2.2) mode = "walking"; // ~2.9–7.9 km/h
-    if (s >= 2.2) mode = "running";            // >= 7.9 km/h
+
+    if (s >= 2.2) {
+      mode = "running"; // >= 7.9 km/h
+    } else if (s >= 0.8) {
+      mode = "walking"; // ~2.9–7.9 km/h
+    } else {
+      mode = "idle";
+    }
+
     setStatus(mode);
   }, [speed]);
 
-  // calories estimation
+  // calories estimation (stops increasing when paused because distance freezes)
   useEffect(() => {
     const km = distanceM / 1000;
     const wt = parseFloat(weightKg) || 70;
@@ -99,11 +126,20 @@ export default function StepsScreen() {
     setDistanceM(0);
     setCaloriesKcal(0);
     lastCumStepsRef.current = 0;
+    setPaused(false);
+    setWarning(null);
   };
 
   return (
     <View style={styles.container}>
       <Text style={styles.h1}>Steps & Calories</Text>
+
+      {/* Warning banner when paused */}
+      {warning && (
+        <View style={styles.warn}>
+          <Text style={styles.warnText}>{warning}</Text>
+        </View>
+      )}
 
       <View style={styles.row}>
         <View style={styles.input}>
@@ -132,7 +168,7 @@ export default function StepsScreen() {
       <Stat label="Distance" value={`${(distanceM / 1000).toFixed(2)} km`} />
       <Stat label="Calories" value={`${caloriesKcal.toFixed(1)} kcal`} />
       <Stat label="Speed" value={`${(speed * 3.6).toFixed(1)} km/h`} />
-      <Stat label="Mode" value={status} />
+      <Stat label="Mode" value={status + (paused ? " (paused)" : "")} />
 
       <View style={{ height: 12 }} />
       <TouchableOpacity onPress={resetSession} style={styles.btn}>
@@ -168,6 +204,17 @@ function Stat({ label, value, big }: { label: string; value: string; big?: boole
 const styles = StyleSheet.create({
   container: { flex: 1, paddingTop: 60, paddingHorizontal: 20, backgroundColor: "#0b1220" },
   h1: { color: "white", fontSize: 20, fontWeight: "700", marginBottom: 16 },
+
+  warn: {
+    backgroundColor: "#3c0d0d",
+    borderColor: "#ff6b6b",
+    borderWidth: 1,
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  warnText: { color: "#ffb4b4", fontWeight: "600" },
+
   row: { flexDirection: "row", gap: 12 },
   input: { flex: 1 },
   label: { color: "#c9d1e6", marginBottom: 6 },
