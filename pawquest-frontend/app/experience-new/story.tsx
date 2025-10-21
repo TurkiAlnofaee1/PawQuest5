@@ -1,3 +1,4 @@
+// app/experience-new/story.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -10,34 +11,51 @@ import {
   Platform,
 } from 'react-native';
 import TopBar from '@/components/TopBar';
+import ExperienceSegment from '@/components/ExperienceSegment'; // 👈 NEW
+
+// ✅ Firestore helper
+import { createStory } from '../../src/lib/experience';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
 export default function StoryFormScreen() {
   const [storyName, setStoryName] = useState('');
   const [storyScript, setStoryScript] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    if (saving) return;
+    try {
+      if (!storyName.trim()) return alert('Please enter Story Name');
+      if (!storyScript.trim()) return alert('Please add the script');
+      setSaving(true);
+
+      await createStory({
+        storyName: storyName.trim(),
+        script: storyScript.trim(),
+        createdBy: 'demo',
+      });
+
+      alert('Story saved!');
+      setStoryName(''); setStoryScript('');
+    } catch (e: any) {
+      alert(`Failed to save: ${e?.message ?? e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <View style={styles.root}>
-      {/* Full-bleed background */}
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
+      <TopBar title="Create an experience  +" backTo="/(tabs)/settings" />
 
-      {/* Top header (left-aligned title + back arrow to Settings) */}
-      <TopBar title="Create an experiance  +" backTo="/(tabs)/settings" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* Segments: Story active */}
-        <View style={styles.segmentWrap}>
-          <View style={[styles.segmentPill, { opacity: 0.7 }]}>
-            <Text style={[styles.segmentText, { opacity: 0.7 }]}>Challenge</Text>
-          </View>
-          <View style={[styles.segmentPill, styles.segmentActive]}>
-            <Text style={[styles.segmentText, styles.segmentTextActive]}>Story</Text>
-          </View>
-        </View>
+        {/* 👇 Segmented control that switches pages */}
+        <ExperienceSegment />
 
         <Text style={styles.formTitle}>Add Story</Text>
 
-        {/* Story Name */}
         <Text style={styles.label}>Story Name</Text>
         <TextInput
           style={[styles.input, styles.elevated]}
@@ -47,7 +65,6 @@ export default function StoryFormScreen() {
           onChangeText={setStoryName}
         />
 
-        {/* Story Script */}
         <Text style={styles.label}>Story Script</Text>
         <TextInput
           style={[styles.textArea, styles.elevated]}
@@ -58,9 +75,13 @@ export default function StoryFormScreen() {
           multiline
         />
 
-        {/* Submit button */}
-        <TouchableOpacity style={[styles.submitBtn, styles.elevated]} activeOpacity={0.9}>
-          <Text style={styles.submitText}>Submit</Text>
+        <TouchableOpacity
+          style={[styles.submitBtn, styles.elevated]}
+          activeOpacity={0.9}
+          onPress={onSubmit}
+          disabled={saving}
+        >
+          <Text style={styles.submitText}>{saving ? 'Saving…' : 'Submit'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -68,45 +89,12 @@ export default function StoryFormScreen() {
 }
 
 const styles = StyleSheet.create({
-  // layout / background
-  root: {
-    flex: 1,
-    width: '100%',
-    alignSelf: 'stretch',
-    backgroundColor: '#000', // fallback behind the image
-  },
+  root: { flex: 1, width: '100%', alignSelf: 'stretch', backgroundColor: '#000' },
   bg: { ...StyleSheet.absoluteFillObject },
-  scroll: {
-    flexGrow: 1,
-    padding: 16,
-    paddingBottom: 96, // keep Submit above bottom tabs
-    rowGap: 8,
-  },
+  scroll: { flexGrow: 1, padding: 16, paddingBottom: 96, rowGap: 8 },
 
-  // headings
   formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 10, marginBottom: 10 },
 
-  // segmented header
-  segmentWrap: {
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0,0,0,0.15)',
-    padding: 6,
-    borderRadius: 22,
-    marginBottom: 8,
-  },
-  segmentPill: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: 'rgba(203,238,170,0.8)',
-    marginRight: 8,
-  },
-  segmentActive: { backgroundColor: '#e8f7d0' },
-  segmentText: { fontWeight: '800', color: '#294125' },
-  segmentTextActive: { color: '#111' },
-
-  // labels / inputs
   label: { fontSize: 13, fontWeight: '800', marginLeft: 10, marginBottom: 6, color: '#2c3029' },
   input: {
     backgroundColor: 'rgba(203,238,170,0.85)',
@@ -125,17 +113,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  // submit
-  submitBtn: {
-    marginTop: 14,
-    backgroundColor: '#111',
-    borderRadius: 999,
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
+  submitBtn: { marginTop: 14, backgroundColor: '#111', borderRadius: 999, alignItems: 'center', paddingVertical: 14 },
   submitText: { color: '#fff', fontWeight: '900', fontSize: 16 },
 
-  // shadow
   elevated: Platform.select({
     ios: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
     android: { elevation: 3 },
