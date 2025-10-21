@@ -22,7 +22,7 @@ export default function TabLayout() {
         tabBarStyle: Platform.select({
           ios: {
             position: 'absolute',
-            height: 60,
+            height: 70,
             paddingHorizontal: 0,  // remove side padding
             marginHorizontal: 0,   // remove side margin
             borderTopWidth: 0,
