@@ -13,6 +13,9 @@ export type PlayerProfile = {
   weight?: number | null;
   avatarUrl?: string | null;
   role?: string | null;
+  xp?: number | null;
+  level?: number | null;
+  pets?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
@@ -43,6 +46,8 @@ export function usePlayerProfile(): ProfileState {
             email: user.email,
             displayName: user.displayName,
             avatarUrl: user.photoURL,
+            xp: 0,
+            level: 0,
           },
           loading: false,
           error: null,

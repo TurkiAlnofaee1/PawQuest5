@@ -18,6 +18,7 @@ import type { ComponentProps } from 'react';
 import { signOut, updatePlayerProfile } from '@/src/lib/auth';
 import { usePlayerProfile } from '@/src/hooks/usePlayerProfile';
 import type { PlayerProfile } from '@/src/hooks/usePlayerProfile';
+import { XP_PER_LEVEL, calculateLevel, xpForLevel } from '@/src/lib/playerProgress';
 
 const bgImage = require('../assets/images/ImageBackground.jpg');
 const placeholder = require('../assets/images/PawquestLogo.png');
@@ -84,6 +85,19 @@ export default function AccountScreen() {
       avatarPreview: profile.avatarUrl ?? '',
     });
   }, [profile, editing]);
+
+  const xp =
+    typeof profile?.xp === 'number' && Number.isFinite(profile.xp) ? Math.max(0, profile.xp) : 0;
+  const levelFromProfile =
+    typeof profile?.level === 'number' && Number.isFinite(profile.level) && profile.level > 0
+      ? profile.level
+      : undefined;
+  const level = levelFromProfile ?? calculateLevel(xp);
+  const baseLevelXp = xpForLevel(level);
+  const xpIntoLevel = Math.max(0, xp - baseLevelXp);
+  const levelProgress = XP_PER_LEVEL > 0 ? Math.min(1, xpIntoLevel / XP_PER_LEVEL) : 0;
+  const xpRemaining = Math.max(0, XP_PER_LEVEL - xpIntoLevel);
+  const totalXpDisplay = xp.toLocaleString();
 
   const handleSignOut = async () => {
     try {
@@ -206,6 +220,24 @@ export default function AccountScreen() {
           </View>
           <Text style={styles.name}>{profile?.displayName ?? 'Paw Explorer'}</Text>
           <Text style={styles.role}>{formatJoinedDate(profile?.createdAt)}</Text>
+          <View style={styles.levelCard}>
+            <View style={styles.levelHeader}>
+              <MaterialCommunityIcons name="trophy-variant-outline" size={18} color="#0F172A" />
+              <Text style={styles.levelLabel}>Level {level}</Text>
+            </View>
+            <View style={styles.levelProgressBar}>
+              <View
+                style={[
+                  styles.levelProgressFill,
+                  { width: `${Math.max(6, levelProgress * 100)}%` },
+                  { opacity: levelProgress > 0 ? 1 : 0.4 },
+                ]}
+              />
+            </View>
+            <Text style={styles.levelXp}>
+              {Math.round(xpIntoLevel)} / {XP_PER_LEVEL} XP · {xpRemaining} XP to next
+            </Text>
+          </View>
         </View>
 
         <View style={styles.card}>
@@ -272,6 +304,8 @@ export default function AccountScreen() {
             </View>
           ) : (
             <View style={styles.infoGrid}>
+              <InfoItem label="Level" value={`Level ${level}`} icon="trophy-outline" />
+              <InfoItem label="Total XP" value={`${totalXpDisplay} XP`} icon="star-circle-outline" />
               <InfoItem label="Email" value={profile?.email ?? 'Not set'} icon="email-outline" />
               <InfoItem label="Activity" value={activityLabels[profile?.activityLevel ?? ''] ?? 'Not set'} icon="run-fast" />
               <InfoItem label="Age" value={profile?.age ? `${profile.age} yrs` : 'Not set'} icon="cake-variant-outline" />
@@ -391,6 +425,46 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: 'rgba(247,255,230,0.82)',
     fontWeight: '600',
+  },
+  levelCard: {
+    marginTop: 16,
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: 'rgba(247,255,230,0.88)',
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  levelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  levelLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  levelProgressBar: {
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(12, 46, 22, 0.18)',
+    overflow: 'hidden',
+  },
+  levelProgressFill: {
+    height: '100%',
+    backgroundColor: '#0C2E16',
+    borderRadius: 999,
+  },
+  levelXp: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
   },
   card: {
     backgroundColor: 'rgba(247,255,230,0.95)',

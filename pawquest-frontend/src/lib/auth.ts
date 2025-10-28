@@ -187,6 +187,9 @@ async function ensureUserDocument(user: User, overrides?: ProfileDetails) {
 
     if (!snapshot.exists()) {
       payload.createdAt = serverTimestamp();
+      payload.xp = 0;
+      payload.level = 0;
+      payload.pets = [];
     }
 
     await setDoc(docRef, payload, { merge: true });

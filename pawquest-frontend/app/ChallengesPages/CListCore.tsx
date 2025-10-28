@@ -18,6 +18,7 @@ import {
   FirestoreDataConverter,
   QueryDocumentSnapshot,
 } from "firebase/firestore";
+import { ChallengeStats } from "../../src/lib/firestoreChallenges";
 
 type Challenge = {
   id: string;
@@ -31,6 +32,10 @@ type Challenge = {
   rewardPet?: string;
   completedCount?: number;
   isLocked?: boolean;
+  stats?: ChallengeStats;
+  ratingAvg: number;
+  ratingCount: number;
+  ratingTotal: number;
 };
 
 type Props = {
@@ -59,6 +64,26 @@ const converter: FirestoreDataConverter<Challenge> = {
       estimatedTimeMin = d.estimatedTimeMin;
     }
 
+    const statsRaw = d?.stats ?? {};
+    const ratingCount =
+      typeof statsRaw?.ratingCount === "number" && Number.isFinite(statsRaw.ratingCount)
+        ? Math.max(0, Math.floor(statsRaw.ratingCount))
+        : 0;
+    const ratingTotal =
+      typeof statsRaw?.ratingTotal === "number" && Number.isFinite(statsRaw.ratingTotal)
+        ? statsRaw.ratingTotal
+        : 0;
+    const ratingAvg =
+      typeof statsRaw?.ratingAvg === "number" && Number.isFinite(statsRaw.ratingAvg)
+        ? statsRaw.ratingAvg
+        : ratingCount > 0
+        ? ratingTotal / ratingCount
+        : 0;
+    const stats: ChallengeStats | undefined =
+      ratingCount > 0 || ratingTotal > 0 || typeof statsRaw?.ratingAvg === "number"
+        ? { ratingAvg, ratingCount, ratingTotal }
+        : undefined;
+
     return {
       id: snap.id,
       title: String(d?.title ?? ""),
@@ -71,6 +96,10 @@ const converter: FirestoreDataConverter<Challenge> = {
       rewardPet: typeof d?.rewardPet === "string" ? d.rewardPet : undefined,
       completedCount: typeof d?.completedCount === "number" ? d.completedCount : 0,
       isLocked: Boolean(d?.isLocked),
+      stats,
+      ratingAvg,
+      ratingCount,
+      ratingTotal,
     };
   },
 };
@@ -139,8 +168,14 @@ export default function CListCore({ category, headerTitle, onSelect }: Props) {
           </Text>
 
           <Text style={styles.meta}>
-            <Ionicons name="paw-outline" size={14} /> {item.rewardPet ?? "—"}
+            <Ionicons name="paw-outline" size={14} /> {item.rewardPet ?? "-"}
           </Text>
+          {item.ratingCount > 0 ? (
+            <Text style={styles.meta}>
+              <Ionicons name="star" size={14} color="#F59E0B" />{" "}
+              {item.ratingAvg.toFixed(1)} ({item.ratingCount})
+            </Text>
+          ) : null}
         </View>
       </View>
 
