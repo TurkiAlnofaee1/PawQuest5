@@ -15,10 +15,10 @@ type AuthResult = {
 };
 
 type ProfileDetails = {
-  displayName?: string;
-  age?: number;
-  weight?: number;
-  activityLevel?: string;
+  displayName?: string | null;
+  age?: number | null;
+  weight?: number | null;
+  activityLevel?: string | null;
   avatarUrl?: string | null;
 };
 
@@ -156,14 +156,31 @@ async function ensureUserDocument(user: User, overrides?: ProfileDetails) {
       updatedAt: serverTimestamp(),
       role: 'player',
     };
+    const hasOverride = <K extends keyof ProfileDetails>(key: K) =>
+      overrides ? Object.prototype.hasOwnProperty.call(overrides, key) : false;
 
-    const displayName = overrides?.displayName ?? user.displayName;
-    if (displayName !== undefined) payload.displayName = displayName ?? null;
-    if (typeof overrides?.age === 'number') payload.age = overrides.age;
-    if (typeof overrides?.weight === 'number') payload.weight = overrides.weight;
-    if (overrides?.activityLevel) payload.activityLevel = overrides.activityLevel;
-    if (overrides?.avatarUrl !== undefined) {
-      payload.avatarUrl = overrides.avatarUrl;
+    if (hasOverride('displayName')) {
+      payload.displayName = overrides?.displayName ?? null;
+    } else if (!snapshot.exists()) {
+      payload.displayName = user.displayName ?? null;
+    }
+
+    if (hasOverride('age')) {
+      payload.age = overrides?.age ?? null;
+    }
+
+    if (hasOverride('weight')) {
+      payload.weight = overrides?.weight ?? null;
+    }
+
+    if (hasOverride('activityLevel')) {
+      payload.activityLevel = overrides?.activityLevel ?? null;
+    } else if (!snapshot.exists() && overrides?.activityLevel) {
+      payload.activityLevel = overrides.activityLevel;
+    }
+
+    if (hasOverride('avatarUrl')) {
+      payload.avatarUrl = overrides?.avatarUrl ?? null;
     } else if (!snapshot.exists() && mergedPhotoUrl) {
       payload.avatarUrl = mergedPhotoUrl;
     }
@@ -213,4 +230,73 @@ async function uploadAvatar(
   }
 
   return json.secure_url as string;
+}
+
+type UpdatePlayerProfileInput = {
+  displayName?: string | null;
+  age?: number | null;
+  weight?: number | null;
+  activityLevel?: string | null;
+  avatar?: {
+    uri: string;
+    mimeType?: string;
+  } | null;
+};
+
+export async function updatePlayerProfile(updates: UpdatePlayerProfileInput): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Must be signed in');
+
+  let avatarUrl: string | undefined;
+  if (updates.avatar?.uri) {
+    try {
+      avatarUrl = await uploadAvatar(updates.avatar.uri, {
+        uid: user.uid,
+        mimeType: updates.avatar.mimeType,
+      });
+    } catch (error) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[auth.updatePlayerProfile] avatar upload failed', error);
+      }
+    }
+  }
+
+  const profileUpdates: { displayName?: string; photoURL?: string } = {};
+
+  if (updates.displayName !== undefined) {
+    const trimmed = updates.displayName?.trim() ?? '';
+    if (trimmed) {
+      profileUpdates.displayName = trimmed;
+    } else if (!trimmed && user.displayName) {
+      profileUpdates.displayName = '';
+    }
+  }
+
+  if (avatarUrl) {
+    profileUpdates.photoURL = avatarUrl;
+  }
+
+  if (Object.keys(profileUpdates).length > 0) {
+    try {
+      await updateProfile(user, profileUpdates);
+    } catch (profileError) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[auth.updatePlayerProfile] updateProfile failed', profileError);
+      }
+    }
+  }
+
+  const overrides: ProfileDetails = {};
+  if (updates.displayName !== undefined) overrides.displayName = updates.displayName;
+  if (updates.age !== undefined) overrides.age = updates.age;
+  if (updates.weight !== undefined) overrides.weight = updates.weight;
+  if (updates.activityLevel !== undefined) overrides.activityLevel = updates.activityLevel;
+
+  if (avatarUrl !== undefined) {
+    overrides.avatarUrl = avatarUrl;
+  } else if (updates.avatar === null) {
+    overrides.avatarUrl = null;
+  }
+
+  await ensureUserDocument(user, overrides);
 }
