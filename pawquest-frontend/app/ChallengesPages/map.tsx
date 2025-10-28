@@ -31,11 +31,17 @@ const PROXIMITY_M = 50;
 const MOVE_RECALC_M = 8;
 const RECALC_MIN_GAP_MS = 5000;
 const RECALC_TIMER_SEC = 10;
- 
+
 type RouteSummary = {
   distanceM: number;
   durationS: number;
   nextInstruction?: string;
+};
+
+type RunStats = {
+  startAt: number | null;
+  distance: number;
+  lastPoint: LatLng | null;
 };
 
 type ChallengeDoc = {
@@ -85,7 +91,12 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
 
 export default function MapScreen() {
   const router = useRouter();
-  const { challengeId } = useLocalSearchParams<{ challengeId?: string }>();
+  const { challengeId, difficulty } = useLocalSearchParams<{
+    challengeId?: string;
+    difficulty?: string;
+  }>();
+  const variantParam =
+    typeof difficulty === "string" && difficulty.toLowerCase() === "hard" ? "hard" : "easy";
 
   // From DB
   const [challengeTitle, setChallengeTitle] = useState<string | undefined>(undefined);
@@ -113,6 +124,7 @@ export default function MapScreen() {
   const lastFetchAtRef = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
+  const runStatsRef = useRef<RunStats>({ startAt: null, distance: 0, lastPoint: null });
 
   // YOU pulse
   const pulse = useRef(new Animated.Value(0)).current;
@@ -207,6 +219,18 @@ export default function MapScreen() {
           if (endPoint) setNearEnd(haversineM(c, endPoint) < PROXIMITY_M);
 
           if (challengeStarted && endPoint) {
+            const stats = runStatsRef.current;
+            if (!stats.startAt) {
+              stats.startAt = Date.now();
+            }
+            if (stats.lastPoint) {
+              const delta = haversineM(stats.lastPoint, c);
+              if (Number.isFinite(delta) && delta > 0.2) {
+                stats.distance += delta;
+              }
+            }
+            stats.lastPoint = c;
+
             if (
               !lastRouteOriginRef.current ||
               haversineM(lastRouteOriginRef.current, c) > MOVE_RECALC_M
@@ -386,10 +410,28 @@ export default function MapScreen() {
           loading={routeLoading}
           onCapture={() => {
             audioRef.current?.fadeOut();
+            const stats = runStatsRef.current;
+            const durationSec =
+              stats.startAt !== null ? Math.max(0, Math.round((Date.now() - stats.startAt) / 1000)) : null;
+            let distanceM = stats.distance;
+            if (stats.lastPoint && userLocation) {
+              const tail = haversineM(stats.lastPoint, userLocation);
+              if (Number.isFinite(tail)) distanceM += tail;
+            }
+            const roundedDistance =
+              Number.isFinite(distanceM) && distanceM > 0 ? Math.round(distanceM) : null;
+
+            const baseParams: Record<string, string> = {};
+            if (variantParam) baseParams.variant = variantParam;
+            if (challengeTitle) baseParams.title = challengeTitle;
+            if (durationSec !== null) baseParams.durationSec = String(durationSec);
+            if (roundedDistance !== null) baseParams.distanceM = String(roundedDistance);
+
             if (challengeId) {
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: { challengeId } });
+              baseParams.challengeId = challengeId;
+              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
             } else {
-              router.push("/ChallengesPages/ARPetScreen");
+              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
             }
           }}
         />
@@ -401,6 +443,11 @@ export default function MapScreen() {
           style={styles.startBtn}
           onPress={async () => {
             setChallengeStarted(true);
+            runStatsRef.current = {
+              startAt: Date.now(),
+              distance: 0,
+              lastPoint: userLocation ?? null,
+            };
             audioRef.current?.play();
             if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
           }}
