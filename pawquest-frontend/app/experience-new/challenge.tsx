@@ -1,3 +1,4 @@
+// app/experience-new/challenge.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -10,10 +11,14 @@ import {
   Platform,
 } from 'react-native';
 import TopBar from '@/components/TopBar';
+import ExperienceSegment from '@/components/ExperienceSegment'; // 👈 NEW
+
+// ✅ Firestore helper + type
+import { createChallenge, type Category } from '../../src/lib/experience';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
-const CATEGORY_COLORS: Record<'City' | 'Mountain' | 'Desert' | 'Sea', string> = {
+const CATEGORY_COLORS: Record<Category, string> = {
   City: '#9ed0ff',
   Mountain: '#ffb3b3',
   Desert: '#ffd58a',
@@ -21,34 +26,51 @@ const CATEGORY_COLORS: Record<'City' | 'Mountain' | 'Desert' | 'Sea', string> = 
 };
 
 export default function ChallengeFormScreen() {
-  // form state
   const [name, setName] = useState('');
   const [loc1, setLoc1] = useState('');
   const [script, setScript] = useState('');
   const [duration, setDuration] = useState('');
   const [points, setPoints] = useState('');
-  const [loc2, setLoc2] = useState('');
   const [reward, setReward] = useState('');
-  const [category, setCategory] = useState<'City' | 'Mountain' | 'Desert' | 'Sea'>('City');
+  const [category, setCategory] = useState<Category>('City');
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    if (saving) return;
+    try {
+      if (!name.trim()) return alert('Please enter a Name');
+      if (!script.trim()) return alert('Please add the story script');
+
+      setSaving(true);
+
+      await createChallenge({
+        name: name.trim(),
+        location: loc1.trim(),
+        category,
+        script: script.trim(),
+        durationMinutes: Number(duration) || 0,
+        pointsReward: Number(points) || 0,
+        suggestedReward: reward.trim() || '',
+        createdBy: 'demo',
+      });
+
+      alert('Challenge saved!');
+      setName(''); setLoc1(''); setScript(''); setDuration(''); setPoints(''); setReward(''); setCategory('City');
+    } catch (e: any) {
+      alert(`Failed to save: ${e?.message ?? e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <View style={styles.root}>
-      {/* Full-bleed background */}
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
+      <TopBar title="Create an experience  +" backTo="/(tabs)/settings" />
 
-      {/* Top header (left-aligned title + back arrow to Settings) */}
-      <TopBar title="Create an experiance  +" backTo="/(tabs)/settings" />
-      {/* Content */}
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* Segments: Challenge active */}
-        <View style={styles.segmentWrap}>
-          <View style={[styles.segmentPill, styles.segmentActive]}>
-            <Text style={[styles.segmentText, styles.segmentTextActive]}>Challenge</Text>
-          </View>
-          <View style={[styles.segmentPill, { opacity: 0.7 }]}>
-            <Text style={[styles.segmentText, { opacity: 0.7 }]}>Story</Text>
-          </View>
-        </View>
+        {/* 👇 Segmented control that switches pages */}
+        <ExperienceSegment />
 
         <Text style={styles.formTitle}>Add Challenge</Text>
 
@@ -120,6 +142,7 @@ export default function ChallengeFormScreen() {
               placeholderTextColor="#6A6A6A"
               value={duration}
               onChangeText={setDuration}
+              keyboardType="numeric"
             />
 
             <Text style={[styles.label, { marginTop: 8 }]}>Points Reward</Text>
@@ -134,9 +157,8 @@ export default function ChallengeFormScreen() {
           </View>
         </View>
 
-        {/* Row 3: Location | Suggested Rewards */}
+        {/* Row 3: Suggested Rewards */}
         <View style={styles.row}>
-         
           <View style={styles.col}>
             <Text style={styles.label}>Suggested Rewards</Text>
             <TextInput
@@ -149,8 +171,13 @@ export default function ChallengeFormScreen() {
           </View>
         </View>
 
-        <TouchableOpacity style={[styles.submitBtn, styles.elevated]} activeOpacity={0.9}>
-          <Text style={styles.submitText}>Submit</Text>
+        <TouchableOpacity
+          style={[styles.submitBtn, styles.elevated]}
+          activeOpacity={0.9}
+          onPress={onSubmit}
+          disabled={saving}
+        >
+          <Text style={styles.submitText}>{saving ? 'Saving…' : 'Submit'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -158,54 +185,14 @@ export default function ChallengeFormScreen() {
 }
 
 const styles = StyleSheet.create({
-  // layout / background
-  root: {
-    flex: 1,
-    width: '100%',
-    alignSelf: 'stretch',
-    backgroundColor: '#000', // fallback behind the image
-  },
-  bg: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  scroll: {
-    flexGrow: 1,
-    padding: 16,
-    paddingBottom: 96, // keep Submit above bottom tabs
-    rowGap: 8,
-  },
+  root: { flex: 1, width: '100%', alignSelf: 'stretch', backgroundColor: '#000' },
+  bg: { ...StyleSheet.absoluteFillObject },
+  scroll: { flexGrow: 1, padding: 16, paddingBottom: 96, rowGap: 8 },
 
-  // headings
   formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 10, marginBottom: 10 },
 
-  // segmented header
-  segmentWrap: {
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0,0,0,0.15)',
-    padding: 6,
-    borderRadius: 22,
-    marginBottom: 8,
-  },
-  segmentPill: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: 'rgba(203,238,170,0.8)',
-    marginRight: 8,
-  },
-  segmentActive: { backgroundColor: '#e8f7d0' },
-  segmentText: { fontWeight: '800', color: '#294125' },
-  segmentTextActive: { color: '#111' },
-
-  // labels / inputs
   label: { fontSize: 13, fontWeight: '800', marginLeft: 10, marginBottom: 6, color: '#2c3029' },
-  input: {
-    backgroundColor: 'rgba(203,238,170,0.85)',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
+  input: { backgroundColor: 'rgba(203,238,170,0.85)', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 12 },
   textArea: {
     backgroundColor: 'rgba(203,238,170,0.85)',
     borderRadius: 18,
@@ -215,33 +202,17 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
 
-  // grid
   row: { flexDirection: 'row', gap: 12, marginTop: 6 },
   col: { flex: 1 },
 
-  // chips
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 6 },
-  chip: {
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.12)',
-  },
+  chip: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' },
   chipSelected: { borderColor: '#000' },
   chipText: { fontWeight: '800', color: '#1f2722' },
 
-  // submit
-  submitBtn: {
-    marginTop: 14,
-    backgroundColor: '#111',
-    borderRadius: 999,
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
+  submitBtn: { marginTop: 14, backgroundColor: '#111', borderRadius: 999, alignItems: 'center', paddingVertical: 14 },
   submitText: { color: '#fff', fontWeight: '900', fontSize: 16 },
 
-  // shadow
   elevated: Platform.select({
     ios: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
     android: { elevation: 3 },
