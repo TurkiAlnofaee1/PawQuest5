@@ -21,7 +21,7 @@ const defaultBg = require("../../assets/images/ImageBackground.jpg");
 
 // Per-category backgrounds
 const bgByCategory: Record<string, any> = {
-  city: require("../../assets/images/Al-Balad.jpg"),
+  city: require("../../assets/images/Riyadd.jpg"),
   mountain: require("../../assets/images/ImageBackground.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
   sea: require("../../assets/images/ImageBackground.jpg"),
