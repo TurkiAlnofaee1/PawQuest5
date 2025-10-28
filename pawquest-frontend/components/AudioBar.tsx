@@ -146,6 +146,9 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, 
 
 export default AudioBar;
 
+// Add a display name for better DevTools and to satisfy eslint/react/display-name
+AudioBar.displayName = 'AudioBar';
+
 const styles = StyleSheet.create({
   wrap: {
     position: "absolute",
