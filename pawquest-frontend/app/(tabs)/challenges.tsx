@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -31,11 +31,12 @@ type Category = {
 };
 
 const FALLBACK: Category[] = [
-  { id: "city", name: "City", color: "#4aa3be", icon: "🏙️", totalChallenges: 0 },
-  { id: "mountain", name: "Mountain", color: "#20b07b", icon: "⛰️", totalChallenges: 0 },
-  { id: "desert", name: "Desert", color: "#ff8a2a", icon: "🏜️", totalChallenges: 0 },
-  { id: "sea", name: "Sea", color: "#2e6ddf", icon: "🌊", totalChallenges: 0 },
+  { id: "city", name: "City", color: "#4AA3BE", icon: "🏙️", totalChallenges: 0 },
+  { id: "mountain", name: "Mountain", color: "#20B07B", icon: "⛰️", totalChallenges: 0 },
+  { id: "desert", name: "Desert", color: "#FF8A2A", icon: "🏜️", totalChallenges: 0 },
+  { id: "sea", name: "Sea", color: "#2E6DDF", icon: "🌊", totalChallenges: 0 },
 ];
+
 
 const converter: FirestoreDataConverter<Category> = {
   toFirestore: (c) => c as any,
@@ -61,16 +62,68 @@ function fadeColor(hex: string, opacity = 0.6) {
 
 export default function Challenges() {
   const router = useRouter();
-  const [items, setItems] = useState<Category[]>([]);
+  const [items, setItems] = useState<Category[]>(FALLBACK);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const ref = collection(db, "challengeCategories").withConverter(converter);
-        const snap = await getDocs(ref);
-        const list = snap.docs.map((d) => d.data());
-        setItems(list.length ? list : FALLBACK);
+        const categoriesRef = collection(db, "challengeCategories").withConverter(converter);
+        const [metaSnap, challengeSnap] = await Promise.all([
+          getDocs(categoriesRef),
+          getDocs(collection(db, "challenges")),
+        ]);
+
+        const map = new Map<string, Category>();
+        FALLBACK.forEach((cat) => map.set(cat.id, { ...cat }));
+
+        metaSnap.docs.forEach((docSnap) => {
+          const meta = docSnap.data();
+          const id = meta.id.toLowerCase();
+          map.set(id, {
+            ...(map.get(id) ?? {
+              id,
+              name: meta.name ?? id,
+              color: meta.color ?? "#4AA3BE",
+              icon: meta.icon,
+              totalChallenges: 0,
+            }),
+            ...meta,
+            id,
+            totalChallenges: map.get(id)?.totalChallenges ?? 0,
+          });
+        });
+
+        let total = 0;
+        challengeSnap.docs.forEach((docSnap) => {
+          const data = docSnap.data() as Record<string, any>;
+          const rawCat = (data?.categoryId ?? data?.category ?? "city") as string;
+          const catId = rawCat.toLowerCase();
+          const entry = map.get(catId);
+          if (entry) {
+            entry.totalChallenges += 1;
+          } else {
+            map.set(catId, {
+              id: catId,
+              name: catId.replace(/\b\w/g, (l) => l.toUpperCase()),
+              color: "#4AA3BE",
+              icon: undefined,
+              totalChallenges: 1,
+            });
+          }
+          total += 1;
+        });
+
+        const ordered = Array.from(map.values()).sort((a, b) => {
+          const idxA = FALLBACK.findIndex((cat) => cat.id === a.id);
+          const idxB = FALLBACK.findIndex((cat) => cat.id === b.id);
+          if (idxA === -1 && idxB === -1) return a.name.localeCompare(b.name);
+          if (idxA === -1) return 1;
+          if (idxB === -1) return -1;
+          return idxA - idxB;
+        });
+
+        setItems(ordered);
       } catch (e) {
         console.error("Categories load failed:", e);
         setItems(FALLBACK);
@@ -80,9 +133,13 @@ export default function Challenges() {
     })();
   }, []);
 
-  const total = items.reduce(
-    (a, c) => a + (Number.isFinite(c.totalChallenges) ? c.totalChallenges : 0),
-    0
+  const total = useMemo(
+    () =>
+      items.reduce(
+        (sum, cat) => sum + (Number.isFinite(cat.totalChallenges) ? cat.totalChallenges : 0),
+        0,
+      ),
+    [items],
   );
 
   const renderItem = ({ item }: { item: Category }) => (

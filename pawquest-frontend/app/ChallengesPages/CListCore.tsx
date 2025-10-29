@@ -42,6 +42,7 @@ type Props = {
   category: string;
   headerTitle: string;
   onSelect?: (id: string, title: string) => void;
+  onCountChange?: (count: number) => void;
 };
 
 // Per-category card color (adjust to your palette)
@@ -109,7 +110,7 @@ const metersToKm = (m?: number) =>
 const minutesText = (min?: number) =>
   typeof min === "number" ? `${min} min` : "—";
 
-export default function CListCore({ category, headerTitle, onSelect }: Props) {
+export default function CListCore({ category, headerTitle, onSelect, onCountChange }: Props) {
   const [items, setItems] = useState<Challenge[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -120,18 +121,25 @@ export default function CListCore({ category, headerTitle, onSelect }: Props) {
         const base = collection(db, "challenges").withConverter(converter);
         const snap = await getDocs(query(base, where("categoryId", "==", category)));
         const list = snap.docs.map((d) => d.data());
-        if (mounted) setItems(list);
+        if (mounted) {
+          setItems(list);
+          onCountChange?.(list.length);
+        }
       } catch (e) {
         console.error("Load challenges failed:", e);
-        if (mounted) setItems([]);
+        if (mounted) {
+          setItems([]);
+          onCountChange?.(0);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
     })();
     return () => {
       mounted = false;
+      onCountChange?.(0);
     };
-  }, [category]);
+  }, [category, onCountChange]);
 
   const renderItem = ({ item }: { item: Challenge }) => (
     <Pressable
