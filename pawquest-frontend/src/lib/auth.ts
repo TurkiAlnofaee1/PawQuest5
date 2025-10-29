@@ -185,14 +185,44 @@ async function ensureUserDocument(user: User, overrides?: ProfileDetails) {
       payload.avatarUrl = mergedPhotoUrl;
     }
 
-    if (!snapshot.exists()) {
+const isNewUser = !snapshot.exists();
+    if (isNewUser) {
       payload.createdAt = serverTimestamp();
       payload.xp = 0;
       payload.level = 0;
       payload.pets = [];
+      // Auto-equip the starter pet on first sign-in
+      payload.equippedPetId = 'starter-falcon';
     }
 
     await setDoc(docRef, payload, { merge: true });
+    // If this is a newly created user, give them a starter pet by default.
+    // This creates a pet document under Users/{uid}/pets/starter-pet so the
+    // rest of the app (which reads Users/{uid}/pets/*) will show a pet.
+    if (isNewUser) {
+      try {
+        const starterPetRef = doc(db, 'Users', user.uid, 'pets', 'starter-falcon');
+        await setDoc(
+          starterPetRef,
+          {
+            petId: 'starter-falcon',
+            name: 'Falcon',
+            imageUrl: 'https://i.postimg.cc/cJW1ztH5/Falcon.png',
+            challengeId: null,
+            variant: null,
+            collectedAt: serverTimestamp(),
+            xp: 0,
+            evoLevel: 0,
+          },
+          { merge: true },
+        );
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[auth.ensureUserDocument] failed to create starter pet', err);
+        }
+      }
+    }
   } catch (error) {
     if (process.env.NODE_ENV === 'development') {
       console.warn('[auth.ensureUserDocument] failed to sync profile', error);

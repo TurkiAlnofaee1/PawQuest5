@@ -8,6 +8,8 @@ import {
 import { db } from "./firebase";
 
 export const XP_PER_LEVEL = 1000;
+// Pet evolution threshold: every 500 XP grants 1 evolution level
+export const PET_XP_PER_LEVEL = 500;
 
 export function calculateLevel(xp: number): number {
   if (!Number.isFinite(xp) || xp <= 0) return 0;
@@ -82,6 +84,8 @@ export async function awardPlayerProgress({
           challengeId: challengeId ?? null,
           variant: variant ?? null,
           collectedAt: serverTimestamp(),
+          xp: 0,
+          evoLevel: 0,
         },
         { merge: true },
       );
@@ -93,6 +97,34 @@ export async function awardPlayerProgress({
     }
   }
 
+  // Award pet evolution XP to the currently equipped pet only
+  if (xpEarned && xpEarned > 0) {
+    try {
+      await runTransaction(db, async (tx: Transaction) => {
+        const userSnap = await tx.get(userRef);
+        const equippedPetId = (userSnap.data() as any)?.equippedPetId as string | undefined;
+        if (!equippedPetId) return;
+        const equippedPetRef = doc(db, 'Users', uid, 'pets', equippedPetId);
+        const petSnap = await tx.get(equippedPetRef);
+        if (!petSnap.exists()) return;
+        const data: any = petSnap.data() ?? {};
+        const currentPetXp = typeof data?.xp === 'number' && Number.isFinite(data.xp) ? data.xp : 0;
+        const nextPetXp = Math.max(0, currentPetXp + xpEarned);
+        const nextEvoLevel = Math.floor(nextPetXp / PET_XP_PER_LEVEL);
+        tx.set(
+          equippedPetRef,
+          { xp: nextPetXp, evoLevel: nextEvoLevel, updatedAt: serverTimestamp() },
+          { merge: true },
+        );
+      });
+    } catch (err) {
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('[playerProgress] Failed to apply pet evolution XP', err);
+      }
+    }
+  }
 
+  
   return progress;
 }
