@@ -1,5 +1,4 @@
-// app/(tabs)/settings.tsx
-import React from 'react';
+import React from "react";
 import {
   View,
   Text,
@@ -8,12 +7,11 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Platform,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+} from "react-native";
+import { useRouter } from "expo-router";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-// NOTE: settings.tsx is inside app/(tabs)/, so we go up TWO levels to assets
-const bgImage = require('../../assets/images/ImageBackground.jpg');
+const bgImage = require("../../assets/images/ImageBackground.jpg");
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -29,7 +27,7 @@ export default function SettingsScreen() {
           <TouchableOpacity
             style={styles.card}
             activeOpacity={0.8}
-            onPress={() => router.push('/account'as any)}
+            onPress={() => router.push("/account" as any)}
           >
             <Text style={styles.cardText}>Account</Text>
             <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
@@ -38,20 +36,22 @@ export default function SettingsScreen() {
           <TouchableOpacity
             style={styles.card}
             activeOpacity={0.8}
-            onPress={() => router.push('/notifications'as any)}
+            onPress={() => router.push("/notifications" as any)}
           >
             <Text style={styles.cardText}>Notifications</Text>
             <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
           </TouchableOpacity>
 
+          {/* ✅ Create Experience */}
           <TouchableOpacity
-            style={styles.card}
-            activeOpacity={0.8}
-            onPress={() => router.push('/experience-new'as any)}
-          >
-            <Text style={styles.cardText}>Create an experience  +</Text>
-            <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
-          </TouchableOpacity>
+  style={styles.card}
+  activeOpacity={0.8}
+  onPress={() => router.push("/experience-new")}  // ✅ points to index.tsx inside experience-new
+>
+  <Text style={styles.cardText}>Create an experience  +</Text>
+  <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
+</TouchableOpacity>
+
         </View>
       </SafeAreaView>
     </ImageBackground>
@@ -59,35 +59,34 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  bg: { flex: 1, width: '100%', height: '100%' },
-  safeArea: { flex: 1, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 12 : 8 },
+  bg: { flex: 1, width: "100%", height: "100%" },
+  safeArea: { flex: 1, paddingHorizontal: 16, paddingTop: Platform.OS === "ios" ? 12 : 8 },
   title: {
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: "800",
     marginBottom: 16,
-    color: '#111',
+    color: "#111",
   },
   list: { gap: 12 },
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-
-    backgroundColor: 'rgba(203, 238, 170, 0.95)', // soft leafy green
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(203, 238, 170, 0.95)",
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 56,
-
-    // soft shadow
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+      ios: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
       android: { elevation: 3 },
-      default: {},
     }),
   },
   cardText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#2c3029',
+    fontWeight: "700",
+    color: "#2c3029",
+  },
+  experienceCard: {
+    backgroundColor: "rgba(190, 227, 191, 0.95)",
   },
 });

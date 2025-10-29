@@ -110,19 +110,46 @@ export default function ChallengeDetails() {
         }
 
         // optional stories subcollection
-        const sref = collection(db, "challenges", String(id), "stories");
-        const ssnap = await getDocs(sref);
-        const list: Story[] = ssnap.docs.map((d: QueryDocumentSnapshot) => {
-          const raw = d.data() as any;
-          return {
-            id: d.id,
-            title: String(raw?.title ?? "Untitled"),
-            distanceMeters: typeof raw?.distanceMeters === "number" ? raw.distanceMeters : undefined,
-            estimatedTimeMin: typeof raw?.estimatedTimeMin === "number" ? raw.estimatedTimeMin : undefined,
-            calories: typeof raw?.calories === "number" ? raw.calories : undefined,
-            hiitType: typeof raw?.hiitType === "string" ? raw.hiitType : undefined,
-          };
-        });
+       // 🔹 Fetch normal challenge stories
+const sref = collection(db, "challenges", String(id), "stories");
+const ssnap = await getDocs(sref);
+
+const challengeStories: Story[] = ssnap.docs.map((d: QueryDocumentSnapshot) => {
+  const raw = d.data() as any;
+  return {
+    id: d.id,
+    title: String(raw?.title ?? "Untitled"),
+    distanceMeters: typeof raw?.distanceMeters === "number" ? raw.distanceMeters : undefined,
+    estimatedTimeMin: typeof raw?.estimatedTimeMin === "number" ? raw.estimatedTimeMin : undefined,
+    calories: typeof raw?.calories === "number" ? raw.calories : undefined,
+    hiitType: typeof raw?.hiitType === "string" ? raw.hiitType : undefined,
+  };
+});
+
+// 🔹 Fetch AI-generated stories (from global collection)
+const globalRef = collection(db, "stories");
+const globalSnap = await getDocs(globalRef);
+
+const aiStories: Story[] = globalSnap.docs.map((d: QueryDocumentSnapshot) => {
+  const raw = d.data() as any;
+  return {
+    id: d.id,
+    title: `${raw?.name ?? "Choose a story"} — AI Generator`,
+    distanceMeters: undefined,
+    estimatedTimeMin: undefined,
+    calories: undefined,
+    hiitType: undefined,
+  };
+});
+
+// 🔹 Combine both
+const combinedStories = [...challengeStories, ...aiStories];
+
+if (active) {
+  setStories(combinedStories);
+  if (combinedStories.length > 0) setSelectedStoryId(combinedStories[0].id);
+}
+
 
         if (active) {
           setStories(list);

@@ -3,6 +3,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { getStorage } from "firebase/storage";  // <-- add this line
 
 // Firebase configuration using environment variables for security
 const firebaseConfig = {
@@ -22,7 +23,10 @@ const app = initializeApp(firebaseConfig);
 // Initialize Firestore
 export const db = getFirestore(app);
 
-// Initialize Auth (optional for now)
+// Initialize Storage (new)
+export const storage = getStorage(app);
+
+// Initialize Auth (optional)
 export const auth = getAuth(app);
 
 export default app;

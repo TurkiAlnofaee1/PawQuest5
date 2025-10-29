@@ -18,6 +18,8 @@ import {
 } from "react-native";
 import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
 
+
+
 // 🔥 Firestore
 import { db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
@@ -82,10 +84,12 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
   }
   return bestI;
 }
-
+    import * as Speech from "expo-speech";
 export default function MapScreen() {
   const router = useRouter();
   const { challengeId } = useLocalSearchParams<{ challengeId?: string }>();
+  const { storyId } = useLocalSearchParams<{ storyId?: string }>();
+
 
   // From DB
   const [challengeTitle, setChallengeTitle] = useState<string | undefined>(undefined);
@@ -132,49 +136,63 @@ export default function MapScreen() {
   // 🎧 audio control
   const audioRef = useRef<AudioBarHandle>(null);
 
-  // 1) Load challenge from DB
-  useEffect(() => {
-    let isMounted = true;
-    (async () => {
-      try {
-        // Require an id in the route: /map?challengeId=abc123
-        const id = challengeId || "default"; // fallback if you want a default doc
-        const snap = await getDoc(doc(db, "challenges", id));
-        if (!snap.exists()) {
-          Alert.alert("Not found", "Challenge document does not exist.");
-          return;
-        }
-        const data = snap.data() as ChallengeDoc;
-
-        // If using GeoPoint: const gp = data.startGeo as firebase.firestore.GeoPoint;
-        // setStartPoint({ latitude: gp.latitude, longitude: gp.longitude });
-        if (data.start && data.end) {
-          const s = { latitude: data.start.latitude, longitude: data.start.longitude };
-          const e = { latitude: data.end.latitude, longitude: data.end.longitude };
-          if (!isMounted) return;
-          setStartPoint(s);
-          setEndPoint(e);
-        } else {
-          Alert.alert("Invalid data", "Challenge is missing start/end coordinates.");
-        }
-
-        if (isMounted) {
-          setChallengeTitle(data.title);
-          setAudioUrl(data.audioUrl);
-        }
-      } catch (e: any) {
-        Alert.alert("DB error", e?.message ?? "Failed to load challenge.");
+// 1) Load challenge from DB
+useEffect(() => {
+  let isMounted = true;
+  (async () => {
+    try {
+      const id = challengeId || "default";
+      const snap = await getDoc(doc(db, "challenges", id));
+      if (!snap.exists()) {
+        Alert.alert("Not found", "Challenge document does not exist.");
+        return;
       }
-    })();
-    return () => { isMounted = false; };
-  }, [challengeId]);
+      const data = snap.data() as ChallengeDoc;
+      if (data.start && data.end) {
+        const s = { latitude: data.start.latitude, longitude: data.start.longitude };
+        const e = { latitude: data.end.latitude, longitude: data.end.longitude };
+        if (!isMounted) return;
+        setStartPoint(s);
+        setEndPoint(e);
+      } else {
+        Alert.alert("Invalid data", "Challenge is missing start/end coordinates.");
+      }
+      if (isMounted) {
+        setChallengeTitle(data.title);
+        setAudioUrl(data.audioUrl);
+      }
+    } catch (e: any) {
+      Alert.alert("DB error", e?.message ?? "Failed to load challenge.");
+    }
+  })();
+  return () => { isMounted = false; };
+}, [challengeId]);
 
-  // 2) Start fresh (avoid showing old route before Start) — key per challenge
-  const cacheKey = `route:${challengeId || "default"}`;
-  useEffect(() => {
-    AsyncStorage.multiRemove([`${cacheKey}:coords`, `${cacheKey}:summary`]).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey]);
+// 🔹 STEP 3 — Fetch AI Story (add this block right here)
+const [aiStoryText, setAiStoryText] = useState<string | null>(null);
+
+useEffect(() => {
+  const fetchStory = async () => {
+    if (!storyId) return;
+    try {
+      const ref = doc(db, "stories", storyId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const data = snap.data();
+        setAiStoryText(data.text || null);
+      }
+    } catch (e) {
+      console.warn("❌ Failed to load AI story:", e);
+    }
+  };
+  fetchStory();
+}, [storyId]);
+
+// 2) Start fresh (avoid showing old route before Start)
+useEffect(() => {
+   const cacheKey = `route:${challengeId || "default"}`;
+  AsyncStorage.multiRemove([`${cacheKey}:coords`, `${cacheKey}:summary`]).catch(() => {});
+}, [cacheKey]);
 
   // 3) Permissions + watcher (start after we have DB points)
   useEffect(() => {
@@ -396,18 +414,36 @@ export default function MapScreen() {
       )}
 
       {/* Start only when inside 20 m of start */}
-      {!challengeStarted && nearStart && (
-        <TouchableOpacity
-          style={styles.startBtn}
-          onPress={async () => {
-            setChallengeStarted(true);
+{!challengeStarted && nearStart && (
+  <TouchableOpacity
+    style={styles.startBtn}
+    onPress={async () => {
+      setChallengeStarted(true);
+
+      if (aiStoryText) {
+        console.log("🎧 Playing AI-generated story...");
+        // Speak the AI story first
+        Speech.speak(aiStoryText, {
+          language: "en-US",
+          rate: 0.95,
+          pitch: 1.0,
+          onDone: () => {
+            console.log("✅ AI story finished, starting background audio");
             audioRef.current?.play();
-            if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
-          }}
-        >
-          <Text style={styles.btnText}>Start {challengeTitle ? `– ${challengeTitle}` : "Challenge"}</Text>
-        </TouchableOpacity>
-      )}
+          },
+        });
+      } else {
+        console.log("🎵 No AI story found, playing default audio...");
+        audioRef.current?.play();
+      }
+
+      if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
+    }}
+  >
+    <Text style={styles.btnText}>Start {challengeTitle ? `– ${challengeTitle}` : "Challenge"}</Text>
+  </TouchableOpacity>
+)}
+
 
       {/* Bottom audio bar — only after Start */}
       <AudioBar
