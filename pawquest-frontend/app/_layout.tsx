@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider, useAuth } from '@/src/hooks/useAuth';
+import { LocationProvider } from '@/src/hooks';
 import Splash from '@/components/Splash';
 import Entrance from '@/components/Entrance';
 import { useEffect } from 'react';
@@ -58,8 +59,9 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <AuthGate>
-          <Stack>
+        <LocationProvider>
+          <AuthGate>
+            <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen
               name="account"
@@ -80,7 +82,8 @@ export default function RootLayout() {
             <Stack.Screen name="(auth)/reset" options={{ headerShown: false }} />
           </Stack>
           <StatusBar style="auto" />
-        </AuthGate>
+          </AuthGate>
+        </LocationProvider>
       </ThemeProvider>
     </AuthProvider>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import axios from "axios";
+import { LocationProvider } from "./src/hooks/useAppLocation";
 
 export default function App() {
   const [message, setMessage] = useState("");
@@ -12,9 +13,11 @@ export default function App() {
   }, []);
 
   return (
-    <View style={styles.container}>
-      <Text>{message || "Loading..."}</Text>
-    </View>
+    <LocationProvider>
+      <View style={styles.container}>
+        <Text>{message || "Loading..."}</Text>
+      </View>
+    </LocationProvider>
   );
 }
 
