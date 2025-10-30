@@ -284,16 +284,22 @@ const Home: React.FC = () => {
 
       if (!additions.length) return;
 
+      // Keep notifications only up to 24 hours old. When new items arrive
+      // we merge them (newest first) but then remove any items older than
+      // the expiry window so they disappear automatically after 24 hours.
+      const EXPIRY_MS = 24 * 60 * 60 * 1000;
       setNotifications((prev) => {
         const known = new Set(prev.map((item) => item.id));
-        const merged = [...prev];
+        const merged: ChallengeNotification[] = [...prev];
         additions.forEach((item) => {
           if (!known.has(item.id)) {
             merged.unshift(item);
             known.add(item.id);
           }
         });
-        return merged.slice(0, 24);
+        const now = Date.now();
+        const filtered = merged.filter((it) => now - it.timestamp <= EXPIRY_MS);
+        return filtered.slice(0, 24);
       });
 
       if (Platform.OS !== 'web') {

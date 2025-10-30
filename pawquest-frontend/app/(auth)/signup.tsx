@@ -75,6 +75,12 @@ export default function SignupScreen() {
 
   const onSubmit = async () => {
     setError(null);
+    // Require avatar before signing up; keep button clickable and show inline error on submit
+    if (!avatar?.uri) {
+      setError('Please add an avatar to continue.');
+      return;
+    }
+    
     if (!displayName.trim()) {
       setError('Please add a username.');
       return;
@@ -87,6 +93,21 @@ export default function SignupScreen() {
       setError('Password must be at least 6 characters.');
       return;
     }
+     // Require age and weight before signing up (show inline error if missing)
+    if (!age?.trim()) {
+      setError('Please add your age.');
+      return;
+    }
+    if (!weight?.trim()) {
+      setError('Please add your weight.');
+      return;
+    }
+    if (!activity) {
+      setError('Please select your activity level.');
+      return;
+    }
+
+
     const ageValue = age ? Number(age) : null;
     const weightValue = weight ? Number(weight) : null;
     if (age && Number.isNaN(ageValue)) {
