@@ -1,9 +1,12 @@
 // app/ChallengesPages/ChallengeDetails.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
+  Animated,
+  Easing,
+  Image,
   ImageBackground,
   Pressable,
   ActivityIndicator,
@@ -12,10 +15,10 @@ import {
   Platform,
   Modal,
 } from "react-native";
-import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { db } from "../../src/lib/firebase";
+import { auth, db } from "../../src/lib/firebase";
 import {
   doc,
   getDoc,
@@ -23,11 +26,16 @@ import {
   getDocs,
   QueryDocumentSnapshot,
 } from "firebase/firestore";
+import {
+  ChallengeStats,
+  getChallengeRatingStats,
+  getUserChallengeRating,
+} from "../../src/lib/firestoreChallenges";
 
 /* ------------------------ category backgrounds ------------------------ */
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
 const bgByCategory: Record<string, any> = {
-  city: require("../../assets/images/Al-Balad.jpg"),
+  city: require("../../assets/images/Riyadd.jpg"),
   mountain: require("../../assets/images/ImageBackground.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
   sea: require("../../assets/images/ImageBackground.jpg"),
@@ -66,6 +74,8 @@ type ChallengeDoc = {
   title: string;
   categoryId: string;
   imageUrl?: string;
+  petImageUrl?: string;
+  rewardPoints?: number;
   rewardPet?: string;
   isLocked?: boolean;
   completedCount?: number;
@@ -87,11 +97,17 @@ export default function ChallengeDetails() {
   const [data, setData] = useState<ChallengeDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"easy" | "hard">("easy");
+  const [ratingStats, setRatingStats] = useState<ChallengeStats | null>(null);
+  const [userRating, setUserRating] = useState<number | null>(null);
 
   // stories
   const [stories, setStories] = useState<Story[]>([]);
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+
+  const headerAnim = useRef(new Animated.Value(0)).current;
+  const rewardAnim = useRef(new Animated.Value(0)).current;
+  const statsAnim = useRef(new Animated.Value(0)).current;
 
   // fetch challenge + stories
   useEffect(() => {
@@ -166,6 +182,82 @@ if (active) {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (loading || !data) return;
+    headerAnim.setValue(0);
+    rewardAnim.setValue(0);
+    statsAnim.setValue(0);
+    Animated.stagger(120, [
+      Animated.timing(headerAnim, {
+        toValue: 1,
+        duration: 320,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(rewardAnim, {
+        toValue: 1,
+        duration: 360,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(statsAnim, {
+        toValue: 1,
+        duration: 360,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [loading, data, headerAnim, rewardAnim, statsAnim]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const normalizedId =
+        typeof id === "string"
+          ? id
+          : Array.isArray(id)
+          ? id[0]
+          : typeof id === "number"
+          ? String(id)
+          : null;
+
+      if (!normalizedId) {
+        setRatingStats(null);
+        setUserRating(null);
+        return () => {
+          active = false;
+        };
+      }
+
+      (async () => {
+        try {
+          const stats = await getChallengeRatingStats(normalizedId);
+          const uid = auth.currentUser?.uid ?? null;
+          let mine: number | null = null;
+          if (uid) {
+            mine = await getUserChallengeRating(normalizedId, uid);
+          }
+          if (active) {
+            setRatingStats(stats);
+            setUserRating(mine);
+          }
+        } catch (error) {
+          if (active) {
+            setRatingStats(null);
+          }
+          if (__DEV__) {
+            // eslint-disable-next-line no-console
+            console.warn("[ChallengeDetails] rating stats fetch failed", error);
+          }
+        }
+      })();
+
+      return () => {
+        active = false;
+      };
+    }, [id]),
+  );
+
   const effectiveCategory = (category || data?.categoryId || "city").toString().toLowerCase();
   const pal = getPalette(effectiveCategory);
   const bgSource = bgByCategory[effectiveCategory] ?? defaultBg;
@@ -176,6 +268,54 @@ if (active) {
     () => stories.find((s) => s.id === selectedStoryId) || null,
     [stories, selectedStoryId]
   );
+
+  const headerTranslateY = useMemo(
+    () =>
+      headerAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-18, 0],
+      }),
+    [headerAnim],
+  );
+
+  const rewardScale = useMemo(
+    () =>
+      rewardAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.92, 1],
+      }),
+    [rewardAnim],
+  );
+
+  const statsTranslateY = useMemo(
+    () =>
+      statsAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [24, 0],
+      }),
+    [statsAnim],
+  );
+
+  const rewardImage = useMemo(() => {
+    if (!data) return null;
+    if (typeof data.petImageUrl === "string" && data.petImageUrl.length > 0) {
+      return data.petImageUrl;
+    }
+    if (typeof data.imageUrl === "string" && data.imageUrl.length > 0) {
+      return data.imageUrl;
+    }
+    return null;
+  }, [data]);
+
+  const rewardPoints = useMemo(() => {
+    if (typeof data?.rewardPoints === "number" && Number.isFinite(data.rewardPoints)) {
+      return data.rewardPoints;
+    }
+    if (typeof variant?.xp === "number" && Number.isFinite(variant.xp)) {
+      return variant.xp;
+    }
+    return null;
+  }, [data, variant]);
 
   // Stats displayed = story override FIRST, fallback to variant
   const statDistance = selectedStory?.distanceMeters ?? variant?.distanceMeters;
@@ -235,7 +375,12 @@ if (active) {
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
-          <View style={styles.header}>
+          <Animated.View
+            style={[
+              styles.header,
+              { opacity: headerAnim, transform: [{ translateY: headerTranslateY }] },
+            ]}
+          >
             <Pressable
               onPress={() => router.back()}
               style={[styles.backBtn, { backgroundColor: "rgba(255,255,255,0.9)" }]}
@@ -250,7 +395,7 @@ if (active) {
                 {effectiveCategory.toUpperCase()}
               </Text>
             </View>
-          </View>
+          </Animated.View>
 
           {/* Tabs */}
           <View style={styles.tabs}>
@@ -279,21 +424,32 @@ if (active) {
           {/* (Smartwatch banner removed by request) */}
 
           {/* BIG Rewards Card (square-ish feature) */}
-          <View
+          <Animated.View
             style={[
               styles.rewardCard,
-              { borderColor: pal.mid, backgroundColor: "rgba(255,255,255,0.96)" },
+              {
+                borderColor: pal.mid,
+                backgroundColor: "rgba(255,255,255,0.96)",
+                opacity: rewardAnim,
+                transform: [{ scale: rewardScale }],
+              },
             ]}
           >
             <Text style={styles.rewardLabel}>Rewards</Text>
             <View style={styles.rewardSquare}>
-              <MaterialCommunityIcons name="bird" size={72} color="#0B3D1F" />
+              {rewardImage ? (
+                <Image source={{ uri: rewardImage }} style={styles.rewardImage} resizeMode="contain" />
+              ) : (
+                <MaterialCommunityIcons name="bird" size={72} color="#0B3D1F" />
+              )}
             </View>
-            <Text style={styles.rewardPetName}>{data.rewardPet ?? "—"}</Text>
+            <Text style={styles.rewardPetName}>{data.rewardPet ?? "-"}</Text>
             <View style={[styles.pointsPill, { backgroundColor: pal.light, borderColor: pal.mid }]}>
-              <Text style={styles.pointsText}>{variant?.xp ?? 0} points</Text>
+              <Text style={styles.pointsText}>
+                {rewardPoints !== null ? `${Math.round(rewardPoints).toLocaleString()} points` : "Reward awaits!"}
+              </Text>
             </View>
-          </View>
+          </Animated.View>
 
           {/* Choose Story — its own bar */}
           <Pressable
@@ -310,10 +466,15 @@ if (active) {
           </Pressable>
 
           {/* Stats/info card */}
-          <View
+          <Animated.View
             style={[
               styles.statsCard,
-              { borderColor: pal.mid, backgroundColor: "rgba(255,255,255,0.96)" },
+              {
+                borderColor: pal.mid,
+                backgroundColor: "rgba(255,255,255,0.96)",
+                opacity: statsAnim,
+                transform: [{ translateY: statsTranslateY }],
+              },
             ]}
           >
             <View style={styles.statsRow}>
@@ -327,16 +488,25 @@ if (active) {
 
             <View style={[styles.divider, { backgroundColor: pal.mid }]} />
 
-            <View style={styles.metaRow}>
+          <View style={styles.metaRow}>
+            <Text style={styles.smallDim}>
+              {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
+            </Text>
+            <Text style={styles.smallDim}>
+              {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
+            </Text>
+            {ratingStats && ratingStats.ratingCount > 0 ? (
               <Text style={styles.smallDim}>
-                {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
+                ★ {ratingStats.ratingAvg.toFixed(1)} ({ratingStats.ratingCount})
               </Text>
-              <Text style={styles.smallDim}>
-                {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
+            ) : null}
+            {userRating ? (
+              <Text style={[styles.smallDim, styles.smallDimOwn]}>
+                your rating: {userRating}★
               </Text>
-              <Text style={styles.smallDim}>★ {data.stats?.rating ?? 4.0}</Text>
-            </View>
+            ) : null}
           </View>
+        </Animated.View>
 
           {/* (Connectivity row removed by request) */}
         </ScrollView>
@@ -439,7 +609,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.06)",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  rewardImage: { width: "100%", height: "100%" },
   rewardPetName: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#0B3D1F" },
   pointsPill: {
     marginTop: 8,
@@ -477,6 +649,7 @@ const styles = StyleSheet.create({
   divider: { height: 1, marginVertical: 12, opacity: 0.6 },
   metaRow: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
   smallDim: { fontSize: 12, color: "#4B5563" },
+  smallDimOwn: { fontSize: 12, color: "#4B5563", opacity: 0.8, fontStyle: "italic" },
 
   /* fixed footer CTA */
   footer: {

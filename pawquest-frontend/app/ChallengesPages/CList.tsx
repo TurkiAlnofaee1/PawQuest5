@@ -1,5 +1,5 @@
 // app/(tabs)/CList.tsx
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -13,15 +13,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // 🔥 Firestore: read totalChallenges from challengeCategories/{category}
-import { db } from "../../src/lib/firebase";
-import { doc, getDoc } from "firebase/firestore";
-
 // Default (fallback) background
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
 
 // Per-category backgrounds
 const bgByCategory: Record<string, any> = {
-  city: require("../../assets/images/Al-Balad.jpg"),
+  city: require("../../assets/images/Riyadd.jpg"),
   mountain: require("../../assets/images/ImageBackground.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
   sea: require("../../assets/images/ImageBackground.jpg"),
@@ -40,27 +37,7 @@ export default function CList() {
   const bgSource =
     catKey && bgByCategory[catKey] ? bgByCategory[catKey] : defaultBg;
 
-  // --- Fetch totalChallenges for this category ---
-  const [total, setTotal] = useState<number | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        if (!catKey) return;
-        const ref = doc(db, "challengeCategories", catKey);
-        const snap = await getDoc(ref);
-        const n = Number((snap.data() as any)?.totalChallenges ?? 0);
-        if (alive) setTotal(Number.isFinite(n) ? n : 0);
-      } catch (e) {
-        if (alive) setTotal(0);
-        console.warn("Failed to load totalChallenges:", e);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [catKey]);
+  const [total, setTotal] = useState(0);
 
   return (
     <ImageBackground source={bgSource} style={styles.bg} resizeMode="cover">
@@ -83,7 +60,7 @@ export default function CList() {
             <View style={{ flex: 1 }}>
               <Text style={styles.h1}>{headerTitle}</Text>
               <Text style={styles.h2}>
-                Challenges Available: {total ?? "—"}
+                Challenges Available: {total}
               </Text>
             </View>
           </View>
@@ -93,6 +70,7 @@ export default function CList() {
             <CListCore
               category={catKey}
               headerTitle={headerTitle}
+              onCountChange={setTotal}
               onSelect={(id, title) =>
                 router.push({
                   pathname: "/ChallengesPages/ChallengeDetails",
