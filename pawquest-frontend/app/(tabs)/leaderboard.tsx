@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { collection, onSnapshot } from 'firebase/firestore';
+import { useRouter } from 'expo-router';
 
 import { db } from '@/src/lib/firebase';
 
@@ -31,6 +32,7 @@ export default function LeaderboardScreen() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState<'city' | 'country'>('city');
+  const router = useRouter();
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'Users'), (snap) => {
@@ -46,9 +48,17 @@ export default function LeaderboardScreen() {
   const top3 = useMemo(() => players.slice(0, 3), [players]);
   const rest = useMemo(() => players.slice(3), [players]);
 
-  const renderRow = ({ item, index }: { item: Player; index: number }) => (
+  const handleOpenProfile = (playerId?: string) => {
+    if (!playerId) return;
+    router.push(`/PetProfile/${playerId}`);
+  };
+
+  const renderRow = ({ item }: { item: Player; index: number }) => (
     <View style={styles.row}>
-      <View style={styles.rowLeft}>
+      <Pressable
+        onPress={() => handleOpenProfile(item.uid)}
+        style={({ pressed }) => [styles.rowLeft, pressed && styles.pressed]}
+      >
         <Image
           source={
             item.avatarUrl || item.photoURL
@@ -67,7 +77,7 @@ export default function LeaderboardScreen() {
             {item.displayName ?? 'Player'}
           </Text>
         </View>
-      </View>
+      </Pressable>
       <Text style={styles.rowScore}>{item.level ?? 0}</Text>
     </View>
   );
@@ -102,7 +112,7 @@ export default function LeaderboardScreen() {
             data={rest}
             keyExtractor={(i) => i.uid}
             renderItem={(props) => renderRow({ ...props, index: props.index })}
-            ListHeaderComponent={<Podium users={top3} />}
+            ListHeaderComponent={<Podium users={top3} onOpenProfile={handleOpenProfile} />}
             contentContainerStyle={styles.list}
             ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.06)', marginHorizontal: 12 }} />}
             ListFooterComponent={<View style={{ height: 14 }} />}
@@ -114,58 +124,76 @@ export default function LeaderboardScreen() {
   );
 }
 
-function Podium({ users }: { users: Player[] }) {
+function Podium({ users, onOpenProfile }: { users: Player[]; onOpenProfile: (id?: string) => void }) {
   const [first, second, third] = [users[0], users[1], users[2]];
   return (
     <View style={styles.podiumWrap}>
       <View style={styles.podiumRow}>
         {/* Second */}
         <View style={[styles.podiumCol, { alignItems: 'flex-end' }]}>
-          <Circle user={second} ringColor="#60A5FA" rank={2} size={96} />
-          <View style={[styles.podiumBase, { backgroundColor: '#A7D3AA' }]}> 
-            <Text
-              style={styles.podiumName}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {second?.displayName ?? '-'}
-            </Text>
-            <Text style={styles.podiumScore}>{second?.level ?? 0}</Text>
-          </View>
+          <Pressable
+            onPress={() => onOpenProfile(second?.uid)}
+            disabled={!second?.uid}
+            style={({ pressed }) => [styles.podiumTouchable, pressed && styles.pressed]}
+          >
+            <Circle user={second} ringColor="#60A5FA" rank={2} size={96} />
+            <View style={[styles.podiumBase, { backgroundColor: '#A7D3AA' }]}> 
+              <Text
+                style={styles.podiumName}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {second?.displayName ?? '-'}
+              </Text>
+              <Text style={styles.podiumScore}>{second?.level ?? 0}</Text>
+            </View>
+          </Pressable>
         </View>
 
         {/* First */}
         <View style={[styles.podiumCol, { alignItems: 'center' }]}>          
           <MaterialCommunityIcons name="crown" size={28} color="#F59E0B" style={{ marginBottom: 6 }} />
-          <Circle user={first} ringColor="#FBBF24" rank={1} size={116} />
-          <View style={[styles.podiumBase, { backgroundColor: '#4CAF50' }]}>            
-            <Text
-              style={[styles.podiumName, { color: '#0B3D1F' }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {first?.displayName ?? '-'}
-            </Text>
-            <Text style={[styles.podiumScore, { color: '#0B3D1F' }]}>{first?.level ?? 0}</Text>
-          </View>
+          <Pressable
+            onPress={() => onOpenProfile(first?.uid)}
+            disabled={!first?.uid}
+            style={({ pressed }) => [styles.podiumTouchable, pressed && styles.pressed]}
+          >
+            <Circle user={first} ringColor="#FBBF24" rank={1} size={116} />
+            <View style={[styles.podiumBase, { backgroundColor: '#4CAF50' }]}>            
+              <Text
+                style={[styles.podiumName, { color: '#0B3D1F' }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {first?.displayName ?? '-'}
+              </Text>
+              <Text style={[styles.podiumScore, { color: '#0B3D1F' }]}>{first?.level ?? 0}</Text>
+            </View>
+          </Pressable>
         </View>
 
         {/* Third */}
         <View style={[styles.podiumCol, { alignItems: 'flex-start' }]}>
-          <Circle user={third} ringColor="#F59E0B" rank={3} size={96} />
-          <View style={[styles.podiumBase, { backgroundColor: '#A7D3AA' }]}>
-            <Text
-              style={styles.podiumName}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {third?.displayName ?? '-'}
-            </Text>
-            <Text style={styles.podiumScore}>{third?.level ?? 0}</Text>
-          </View>
+          <Pressable
+            onPress={() => onOpenProfile(third?.uid)}
+            disabled={!third?.uid}
+            style={({ pressed }) => [styles.podiumTouchable, pressed && styles.pressed]}
+          >
+            <Circle user={third} ringColor="#F59E0B" rank={3} size={96} />
+            <View style={[styles.podiumBase, { backgroundColor: '#A7D3AA' }]}>
+              <Text
+                style={styles.podiumName}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {third?.displayName ?? '-'}
+              </Text>
+              <Text style={styles.podiumScore}>{third?.level ?? 0}</Text>
+            </View>
+          </Pressable>
         </View>
       </View>
 
@@ -242,6 +270,7 @@ const styles = StyleSheet.create({
     borderColor: '#BEE3BF',
   },
   rankText: { color: '#fff', fontWeight: '900', fontSize: 12 },
+  pressed: { opacity: 0.8 },
 
   panelHeader: {
     marginTop: 16,
@@ -258,4 +287,5 @@ const styles = StyleSheet.create({
   rowName: { fontSize: 16, fontWeight: '900', color: '#0B3D1F' },
   rowHandle: { fontSize: 12, fontWeight: '700', color: '#2E7D32', opacity: 0.8 },
   rowScore: { fontSize: 16, fontWeight: '900', color: '#0B3D1F' },
+  podiumTouchable: { alignItems: 'center' },
 });
