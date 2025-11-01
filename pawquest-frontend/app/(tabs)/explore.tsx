@@ -209,7 +209,7 @@ export default function Explore() {
         const computedAvg =
           typeof d?.stats?.ratingTotal === "number" &&
           typeof d?.stats?.ratingCount === "number" &&
-          d.stats.ratingCount > 0
+          d.stats?.ratingCount > 0
             ? d.stats.ratingTotal / d.stats.ratingCount
             : undefined;
 
@@ -270,6 +270,20 @@ export default function Explore() {
   }, [selected, userLoc]);
 
   const initialRegion = useMemo(() => DEFAULT_REGION, []);
+
+  // Helper: navigate to details with robust params (supports both `challengeId` and `id`)
+  const goToDetails = (p: Pin) => {
+    const id = String(p.id);
+    // Send both names to be compatible with either extractor on the details screen
+    router.push({
+      pathname: "/ChallengesPages/ChallengeDetails",
+      params: {
+        challengeId: id,
+        id, // some screens use `id`, others `challengeId`
+        title: p.title || "Challenge", // optional nicety
+      },
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -380,15 +394,7 @@ export default function Explore() {
                   </Text>
                 </View>
 
-                <Pressable
-                  onPress={() =>
-                    router.push({
-                      pathname: "/ChallengesPages/ChallengeDetails",
-                      params: { challengeId: selected.id },
-                    })
-                  }
-                  style={styles.startBtn}
-                >
+                <Pressable onPress={() => goToDetails(selected)} style={styles.startBtn}>
                   <Text style={styles.startText}>Start</Text>
                   <Ionicons name="chevron-forward" size={18} color="#0b332f" />
                 </Pressable>
