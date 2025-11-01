@@ -1,0 +1,5 @@
+<View style={styles.header}>
+        <Text style={styles.h1}>Explore</Text>
+        <Text style={styles.h2}>
+          {loading ? "Loading challenges…" : `${pins.length} starting points`}
+      
