@@ -49,10 +49,10 @@ type Props = {
 
 // Per-category card color (adjust to your palette)
 const CARD_COLORS: Record<string, string> = {
-  city:   "rgba(219, 216, 216, 0.95)",
-  mountain: "rgba(190, 227, 191, 0.95)",
+  city:   "rgba(219, 219, 219, 0.95)",
+  mountain: "rgba(255, 196, 181, 0.95)",
   desert: "rgba(255, 209, 164, 0.95)",
-  sea:    "rgba(180, 205, 255, 0.95)",
+  sea:    "rgba(142, 219, 255, 0.95)",
 };
 
 const converter: FirestoreDataConverter<Challenge> = {

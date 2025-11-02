@@ -105,6 +105,7 @@ export default function TabLayout() {
       <Tabs.Screen name="ChallengesPages/DesertList" options={{ href: null }} />
       <Tabs.Screen name="ChallengesPages/CityList" options={{ href: null }} />
       <Tabs.Screen name="ChallengesPages/SeaList" options={{ href: null }} />
+      <Tabs.Screen name="ChallengesPages/ChallengeReward" options={{ href: null }} />
       <Tabs.Screen name="*" options={{ href: null }} />
     </Tabs>
   );

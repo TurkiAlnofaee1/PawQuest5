@@ -1,11 +1,80 @@
-import React from 'react';
-import { ImageBackground, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Image, ImageBackground, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { collection, doc, getDocs, onSnapshot, query, limit } from 'firebase/firestore';
+import { auth, db } from '@/src/lib/firebase';
+import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
 export default function QuickChallengeDetails() {
   const router = useRouter();
+  const uid = auth.currentUser?.uid ?? null;
+
+  // Equipped pet
+  const [equippedPetId, setEquippedPetId] = useState<string | null>(null);
+  const [equippedPet, setEquippedPet] = useState<{ id: string; name?: string | null; imageUrl?: string | null; xp?: number | null; evoLevel?: number | null } | null>(null);
+
+  useEffect(() => {
+    if (!uid) return;
+    const unsubUser = onSnapshot(doc(db, 'Users', uid), (snap) => {
+      const eq = (snap.data() as any)?.equippedPetId ?? null;
+      setEquippedPetId(typeof eq === 'string' ? eq : null);
+    });
+    return () => unsubUser();
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid || !equippedPetId) {
+      setEquippedPet(null);
+      return;
+    }
+    const unsubPet = onSnapshot(doc(db, 'Users', uid, 'pets', equippedPetId), (snap) => {
+      if (!snap.exists()) return setEquippedPet(null);
+      const d = snap.data() as any;
+      setEquippedPet({ id: snap.id, ...d });
+    });
+    return () => unsubPet();
+  }, [uid, equippedPetId]);
+
+  const levelInfo = useMemo(() => {
+    if (!equippedPet) return { level: 0, progressPct: 0 };
+    const xp = typeof equippedPet.xp === 'number' ? equippedPet.xp : 0;
+    const evoLevel = typeof equippedPet.evoLevel === 'number' ? equippedPet.evoLevel : Math.floor(xp / PET_XP_PER_LEVEL);
+    const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
+    return { level: evoLevel, progressPct: Math.max(0, Math.min(1, progress)) };
+  }, [equippedPet]);
+
+  // Stories (pick from the first challenge's stories to mirror ChallengeDetails fetching shape)
+  type Story = { id: string; title: string; distanceMeters?: number; estimatedTimeMin?: number; calories?: number; hiitType?: string };
+  const [stories, setStories] = useState<Story[]>([]);
+  const [storyPickerOpen, setStoryPickerOpen] = useState(false);
+  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // take first challenge as the source for stories
+        const q = query(collection(db, 'challenges'), limit(1));
+        const challSnap = await getDocs(q);
+        if (challSnap.empty) return;
+        const first = challSnap.docs[0];
+        const sref = collection(db, 'challenges', first.id, 'stories');
+        const ssnap = await getDocs(sref);
+        if (cancelled) return;
+        const list: Story[] = ssnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        setStories(list);
+        if (list.length) setSelectedStoryId(list[0].id);
+      } catch {
+        // silent fail; quick mode still usable
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectedStory = useMemo(() => stories.find((s) => s.id === selectedStoryId) || null, [stories, selectedStoryId]);
 
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
@@ -14,6 +83,37 @@ export default function QuickChallengeDetails() {
           <Text style={styles.h1}>Quick Challenge</Text>
           <Text style={styles.h2}>Start anywhere. Finish anytime.</Text>
         </View>
+
+        {/* Equipped pet summary */}
+        {equippedPet ? (
+          <View style={styles.petCard}>
+            <View style={styles.petRow}>
+              <Image
+                source={equippedPet.imageUrl ? { uri: equippedPet.imageUrl } : require('../../assets/images/icon.png')}
+                style={styles.petImg}
+                resizeMode="contain"
+              />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.petTitle}>Equipped Pet</Text>
+                <Text style={styles.petName} numberOfLines={1}>{(equippedPet.name ?? 'Pet').toString().toUpperCase()}</Text>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${Math.round(levelInfo.progressPct * 100)}%` }]} />
+                </View>
+                <Text style={styles.levelText}>Lvl {levelInfo.level}</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.card}><Text style={styles.item}>No pet equipped yet.</Text></View>
+        )}
+
+        {/* Story picker bar (same pattern as ChallengeDetails) */}
+        <Pressable onPress={() => setStoryPickerOpen(true)} style={[styles.storyBar]}>
+          <Text style={styles.storyText} numberOfLines={1}>
+            {selectedStory?.title ? `Story: ${selectedStory.title}` : 'Choose a Story'}
+          </Text>
+          <Ionicons name="chevron-down" size={18} color="#0B3D1F" />
+        </Pressable>
 
         <View style={styles.card}>
           <Text style={styles.title}>How it works</Text>
@@ -35,6 +135,33 @@ export default function QuickChallengeDetails() {
         >
           <Text style={styles.startText}>Start</Text>
         </Pressable>
+
+        {/* Story picker modal */}
+        <Modal visible={storyPickerOpen} transparent animationType="fade" onRequestClose={() => setStoryPickerOpen(false)}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setStoryPickerOpen(false)}>
+            <View style={styles.modalSheet}>
+              <Text style={styles.modalTitle}>Choose a Story</Text>
+              <ScrollView style={{ maxHeight: 320 }}>
+                {stories.length === 0 ? (
+                  <Text style={styles.modalEmpty}>No stories found</Text>
+                ) : (
+                  stories.map((s) => (
+                    <Pressable
+                      key={s.id}
+                      style={styles.modalItem}
+                      onPress={() => {
+                        setSelectedStoryId(s.id);
+                        setStoryPickerOpen(false);
+                      }}
+                    >
+                      <Text style={styles.modalItemText}>{s.title}</Text>
+                    </Pressable>
+                  ))
+                )}
+              </ScrollView>
+            </View>
+          </Pressable>
+        </Modal>
       </SafeAreaView>
     </ImageBackground>
   );
@@ -63,7 +190,7 @@ const styles = StyleSheet.create({
   item: { fontSize: 15, fontWeight: '700', color: '#0B3D1F', marginVertical: 2 },
 
   startBtn: {
-    marginTop: 18,
+    marginTop: 30,
     marginHorizontal: 20,
     backgroundColor: '#22C55E',
     borderRadius: 18,
@@ -77,5 +204,42 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   startText: { color: '#fff', fontSize: 18, fontWeight: '900' },
-});
 
+  // Equipped pet block
+  petCard: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: '#BEE3BF',
+  },
+  petRow: { flexDirection: 'row', alignItems: 'center' },
+  petImg: { width: 90, height: 90, borderRadius: 16, backgroundColor: '#ECF8F1' },
+  petTitle: { color: '#0B3D1F', fontWeight: '800', fontSize: 12 },
+  petName: { color: '#0B3D1F', fontWeight: '900', fontSize: 16, marginTop: 4 },
+  progressBar: { marginTop: 6, height: 8, backgroundColor: '#E5E7EB', borderRadius: 8, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: '#10B981' },
+  levelText: { marginTop: 6, color: '#0B3D1F', fontWeight: '800' },
+
+  // Story bar + modal
+  storyBar: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#EAF8F2',
+    borderWidth: 1,
+    borderColor: '#C9F0E0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  storyText: { fontSize: 16, fontWeight: '900', color: '#0B3D1F', flex: 1, marginRight: 10 },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: 'white', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 18, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
+  modalTitle: { fontSize: 16, fontWeight: '900', color: '#0B3D1F', marginBottom: 10 },
+  modalEmpty: { fontSize: 13, color: '#4B5563', paddingVertical: 10 },
+  modalItem: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E5E7EB' },
+  modalItemText: { fontSize: 15, fontWeight: '800', color: '#0B3D1F' },
+});

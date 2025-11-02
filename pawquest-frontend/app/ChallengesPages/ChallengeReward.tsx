@@ -7,8 +7,10 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ScrollView,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "@/src/lib/firebase";
@@ -51,6 +53,55 @@ type ChallengeMeta = {
 };
 
 const DEFAULT_BG = require("../../assets/images/ImageBackground.jpg");
+const BG_BY_CATEGORY: Record<string, any> = {
+  city: require("../../assets/images/Riyadd.jpg"),
+  mountain: require("../../assets/images/mountainss.jpg"),
+  desert: require("../../assets/images/Dune.jpg"),
+  sea: require("../../assets/images/seaa.jpg"),
+};
+
+// Category color palettes for Reward screen
+const REWARD_PALETTES = {
+  city: {
+    mid: "#BFC5CE",
+    tabBorder: "#BFC5CE",
+    rewardCardBg: "#D2D7DD",
+    pointsPillBg: "#959ca7ff",
+    statsCardBg: "#BFC5CE",
+    ctaBg: "#4B5563",
+    ctaText: "#FFFFFF",
+  },
+  mountain: {
+    mid: "#F8B4AB",
+    tabBorder: "#F8B4AB",
+    rewardCardBg: "#F8B4AB",
+    pointsPillBg: "#FFECEB",
+    statsCardBg: "#FFECEB",
+    ctaBg: "#f86459ff",
+    ctaText: "#FFFFFF",
+  },
+  desert: {
+    mid: "#F6C995",
+    tabBorder: "#F6C995",
+    rewardCardBg: "#F6C995",
+    pointsPillBg: "#FFF2E0",
+    statsCardBg: "#FFF2E0",
+    ctaBg: "#D97706",
+    ctaText: "#2C1500",
+  },
+  sea: {
+    mid: "#9EDBFF",
+    tabBorder: "#9EDBFF",
+    rewardCardBg: "#9EDBFF",
+    pointsPillBg: "#E6F6FF",
+    statsCardBg: "#E6F6FF",
+    ctaBg: "#0284C7",
+    ctaText: "#FFFFFF",
+  },
+} as const;
+
+const getRewardPalette = (cat?: string) =>
+  REWARD_PALETTES[(cat || "city").toLowerCase() as keyof typeof REWARD_PALETTES] ?? REWARD_PALETTES.city;
 
 const toSingle = (value?: string | string[] | null): string | undefined => {
   if (Array.isArray(value)) return value[0];
@@ -85,6 +136,7 @@ const formatSteps = (steps?: number) => {
 export default function ChallengeReward() {
   const router = useRouter();
   const params = useLocalSearchParams<RouteParams>();
+  const insets = useSafeAreaInsets();
 
   const challengeId = toSingle(params.challengeId);
   const variantParam = toSingle(params.variant);
@@ -109,6 +161,8 @@ export default function ChallengeReward() {
   const [petImage, setPetImage] = useState<string | null>(toSingle(params.petImageUrl) ?? null);
   const [ratingVisible, setRatingVisible] = useState(false);
   const [initialRating, setInitialRating] = useState<number | undefined>(undefined);
+  const [categoryKey, setCategoryKey] = useState<string | null>(null);
+  const pal = getRewardPalette(categoryKey ?? undefined);
 
   const actualDurationSec = useMemo(() => {
     const parsed = toNumber(toSingle(params.durationSec));
@@ -167,6 +221,9 @@ export default function ChallengeReward() {
             };
           })(),
         }));
+        if (typeof data?.categoryId === "string") {
+          setCategoryKey(String(data.categoryId).toLowerCase());
+        }
         if (!petImage) {
           const fromDoc =
             typeof data?.petImageUrl === "string"
@@ -253,6 +310,10 @@ export default function ChallengeReward() {
     router.replace("/(tabs)");
   }, [router]);
 
+  const handleOpenPetInventory = useCallback(() => {
+    router.replace("/(tabs)/petinventory");
+  }, [router]);
+
   const summaryItems = useMemo(() => {
     const variant = challengeMeta.variant ?? {};
     const estimatedDuration =
@@ -297,10 +358,13 @@ export default function ChallengeReward() {
     return items;
   }, [actualDistanceMeters, actualDurationSec, challengeMeta.variant]);
 
-  const backgroundSource =
-    challengeMeta.imageUrl && typeof challengeMeta.imageUrl === "string"
-      ? { uri: challengeMeta.imageUrl }
-      : DEFAULT_BG;
+  const backgroundSource = (() => {
+    const byCat = categoryKey ? BG_BY_CATEGORY[categoryKey] : undefined;
+    if (byCat) return byCat;
+    if (challengeMeta.imageUrl && typeof challengeMeta.imageUrl === "string")
+      return { uri: challengeMeta.imageUrl } as any;
+    return DEFAULT_BG;
+  })();
 
   const basePoints =
     typeof challengeMeta.rewardPoints === "number"
@@ -312,74 +376,89 @@ export default function ChallengeReward() {
     basePoints !== null ? `${Math.round(basePoints).toLocaleString()} points` : "XP earned!";
 
   return (
+    <>
+    <Stack.Screen options={{ headerShown: false }} />
     <ImageBackground source={backgroundSource} style={styles.rewardBackground} resizeMode="cover">
-      <View style={styles.rewardOverlay}>
+      <View style={[styles.rewardOverlay, { paddingTop: insets.top + 8 }]}>
         <View style={styles.rewardHeader}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="chevron-back" size={22} color="#F8FAFC" />
-          </TouchableOpacity>
           <Text style={styles.rewardTitle}>{challengeMeta.title}</Text>
           {challengeMeta.subtitle ? (
             <Text style={styles.rewardSubtitle}>{challengeMeta.subtitle}</Text>
           ) : null}
         </View>
 
-        <View style={styles.rewardCard}>
-          <View style={styles.completedPill}>
-            <Text style={styles.completedText}>Challenge Completed!</Text>
-          </View>
-
-          {petImage ? (
-            <Image source={{ uri: petImage }} style={styles.rewardPet} resizeMode="contain" />
-          ) : null}
-
-          <View style={styles.rewardMessage}>
-            <Text style={styles.rewardMessageTitle}>You've collected a new pet!</Text>
-            <Text style={styles.rewardMessageSubtitle}>
-              Welcome your newest companion: {challengeMeta.rewardPet ?? "Mystery Friend"}!
-            </Text>
-          </View>
-
-          <View style={styles.rewardRow}>
-            <View style={styles.rewardBadge}>
-              <Text style={styles.rewardBadgeText}>{pointsText}</Text>
+        <View style={styles.contentArea}>
+          <View style={[styles.rewardCard, { backgroundColor: pal.rewardCardBg, borderColor: pal.tabBorder }]}>
+            <View style={[styles.completedPill, { backgroundColor: pal.pointsPillBg, borderColor: pal.tabBorder, borderWidth: 1 }]}>
+              <Text style={styles.completedText}>Challenge Completed!</Text>
             </View>
-            <View style={styles.rewardBadge}>
-              <Text style={styles.rewardBadgeText}>Leaderboard Update!</Text>
-              <Text style={styles.rewardBadgeSub}>Keep climbing the ranks!</Text>
-            </View>
-          </View>
 
-          <View style={styles.summaryBlock}>
-            <Text style={styles.summaryTitle}>Challenge Summary</Text>
-            <View style={styles.summaryRow}>
-              {summaryItems.length ? (
+            {petImage ? (
+              <Image source={{ uri: petImage }} style={styles.rewardPet} resizeMode="contain" />
+            ) : null}
+
+            <View style={styles.rewardMessage}>
+              <Text style={styles.rewardMessageTitle}>You've collected a new pet!</Text>
+              <Text style={styles.rewardMessageSubtitle}>
+                Welcome your newest companion: {challengeMeta.rewardPet ?? "Mystery Friend"}!
+              </Text>
+            </View>
+
+            <View style={styles.rewardRow}>
+              <View style={[styles.rewardBadge, { backgroundColor: pal.mid }]}>
+                <Text style={styles.rewardBadgeText}>{pointsText}</Text>
+              </View>
+              <View style={[styles.rewardBadge, { backgroundColor: pal.mid }]}>
+                <Text style={styles.rewardBadgeText}>Leaderboard Update!</Text>
+                <Text style={styles.rewardBadgeSub}>Keep climbing the ranks!</Text>
+              </View>
+            </View>
+
+            <View style={[styles.summaryBlock, { backgroundColor: pal.statsCardBg }] }>
+              <Text style={styles.summaryTitle}>Challenge Summary</Text>
+              <View style={styles.summaryRow}>
+                {summaryItems.length ? (
                 summaryItems.map((item) => (
-                  <View key={item.key} style={styles.summaryItem}>
-                    <Ionicons name={item.icon as any} size={16} color="#0B3D1F" />
+                  <View key={item.key} style={[styles.summaryItem, { backgroundColor: pal.pointsPillBg }]}>
+                    <Ionicons name={item.icon as any} size={16} color="#000000ff" />
                     <Text style={styles.summaryItemText}>{item.label}</Text>
                   </View>
                 ))
               ) : (
                 <Text style={styles.summaryFallback}>Great effort out there!</Text>
               )}
+              </View>
             </View>
           </View>
+
         </View>
 
-        <TouchableOpacity style={styles.homeButton} onPress={handleBackHome}>
-          <Text style={styles.homeButtonText}>Back to Home</Text>
-        </TouchableOpacity>
-      </View>
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 4 }]}>
+          <TouchableOpacity
+            style={[styles.homeButton, { backgroundColor: pal.ctaBg }]}
+            onPress={handleOpenPetInventory}
+          >
+            <Text style={[styles.homeButtonText, { color: pal.ctaText }]}>Pet Inventory</Text>
+          </TouchableOpacity>
 
-      <RatingModal
-        visible={ratingVisible}
-        onClose={() => setRatingVisible(false)}
-        onSubmit={handleSubmitRating}
-        initialValue={initialRating}
-        allowSkip={false}
-      />
+          <TouchableOpacity
+            style={[styles.homeButton, { backgroundColor: pal.ctaBg }]}
+            onPress={handleBackHome}
+          >
+            <Text style={[styles.homeButtonText, { color: pal.ctaText }]}>Back to Home</Text>
+          </TouchableOpacity>
+        </View>
+
+        <RatingModal
+          visible={ratingVisible}
+          onClose={() => setRatingVisible(false)}
+          onSubmit={handleSubmitRating}
+          initialValue={initialRating}
+          allowSkip={false}
+        />
+      </View>
     </ImageBackground>
+    </>
   );
 }
 
@@ -387,17 +466,18 @@ const styles = StyleSheet.create({
   rewardBackground: { flex: 1 },
   rewardOverlay: {
     flex: 1,
-    backgroundColor: "rgba(11, 61, 31, 0.78)",
+    backgroundColor: "transparent",
     paddingHorizontal: 24,
-    paddingTop: 50,
-    paddingBottom: 32,
-    justifyContent: "space-between",
+    paddingTop: 16,
+    paddingBottom: 24,
+    justifyContent: "flex-start",
+    gap: 12,
   },
-  rewardHeader: { alignItems: "center", gap: 6 },
+  rewardHeader: { alignItems: "center", gap: 6, marginBottom: 8 },
   backButton: {
     position: "absolute",
     left: 0,
-    top: -4,
+    top: 8,
     backgroundColor: "rgba(255,255,255,0.2)",
     width: 40,
     height: 40,
@@ -405,6 +485,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  contentArea: { flex: 1 },
+  scrollContent: { paddingBottom: 24, gap: 16 },
+  footer: { gap: 10, marginTop: 8 },
   rewardTitle: {
     color: "#F8FAFC",
     fontSize: 26,
@@ -419,12 +502,12 @@ const styles = StyleSheet.create({
   rewardCard: {
     backgroundColor: "rgba(235, 244, 245, 0.95)",
     borderRadius: 32,
-    paddingVertical: 28,
+    paddingVertical: 14,
     paddingHorizontal: 20,
     alignItems: "center",
-    gap: 18,
+    gap: 10,
     shadowColor: "#000",
-    shadowOpacity: 0.12,
+    shadowOpacity: 0,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 12 },
   },
@@ -435,17 +518,17 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   completedText: {
-    color: "#0B3D1F",
+    color: "#000000ff",
     fontWeight: "800",
     fontSize: 16,
   },
-  rewardPet: { width: 180, height: 180 },
+  rewardPet: { width: 140, height: 140 },
   rewardMessage: { alignItems: "center", paddingHorizontal: 8 },
-  rewardMessageTitle: { fontSize: 18, fontWeight: "800", color: "#0B3D1F" },
+  rewardMessageTitle: { fontSize: 18, fontWeight: "800", color: "#000000ff" },
   rewardMessageSubtitle: {
     marginTop: 6,
     fontSize: 14,
-    color: "#14532D",
+    color: "#000000ff",
     textAlign: "center",
   },
   rewardRow: {
@@ -457,44 +540,44 @@ const styles = StyleSheet.create({
   rewardBadge: {
     flex: 1,
     backgroundColor: "#BEE3BF",
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 18,
     alignItems: "center",
     gap: 4,
   },
-  rewardBadgeText: { fontSize: 16, fontWeight: "800", color: "#0B3D1F" },
-  rewardBadgeSub: { fontSize: 12, color: "#14532D" },
+  rewardBadgeText: { fontSize: 16, fontWeight: "800", color: "#000000ff" },
+  rewardBadgeSub: { fontSize: 12, color: "#000000ff" },
   summaryBlock: {
     width: "100%",
     backgroundColor: "#D2EDE0",
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     borderRadius: 20,
     gap: 12,
   },
-  summaryTitle: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
+  summaryTitle: { fontSize: 15, fontWeight: "800", color: "#000000ff" },
   summaryRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   summaryItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     backgroundColor: "#ECF8F1",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 14,
   },
-  summaryItemText: { fontSize: 13, fontWeight: "700", color: "#0B3D1F" },
-  summaryFallback: { fontSize: 13, color: "#14532D" },
+  summaryItemText: { fontSize: 13, fontWeight: "700", color: "#000000ff" },
+  summaryFallback: { fontSize: 13, color: "#000000ff" },
   homeButton: {
     backgroundColor: "#CBE8F5",
-    paddingVertical: 14,
-    borderRadius: 22,
+    paddingVertical: 16,
+    borderRadius: 24,
     alignItems: "center",
     shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
   },
-  homeButtonText: { fontSize: 16, fontWeight: "800", color: "#0B3D1F" },
+  homeButtonText: { fontSize: 18, fontWeight: "800", color: "#000000ff" },
 });
