@@ -63,6 +63,7 @@ export default function RootLayout() {
           <AuthGate>
             <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="ChallengesPages/ChallengeReward" options={{ headerShown: false }} />
             <Stack.Screen
               name="account"
               options={{
