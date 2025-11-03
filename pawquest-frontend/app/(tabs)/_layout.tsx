@@ -1,41 +1,94 @@
-import { Tabs } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
+import { Tabs } from 'expo-router';
+import { Platform, View } from 'react-native';
 import { AntDesign, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { IconSymbol } from '@/components/ui/IconSymbol';
-import { Colors } from '@/constants/Colors';
-import { useColorScheme } from '@/hooks/useColorScheme';
+
+// 🎨 palette tuned to your screenshot
+const PALETTE = {
+  barBgStart: '#F8F8F8', // lighter center glow
+  barBgEnd: '#66b133ff', // darker edge to blend with background
+  
+  shadow: 'rgba(59, 235, 5, 0.35)', // green-tinted shadow
+  iconActive: '#4CAF50', // golden-brown icons (active)
+  iconInactive: '#555555', // softened version for inactive
+  indicator: '#4CAF50', // golden indicator under active tab
+};
+
+// little pill under the focused icon
+const Indicator = ({ focused }: { focused: boolean }) => (
+  <View
+    style={{
+      height: 4,
+      width: 28,
+      borderRadius: 999,
+      marginTop: 6,
+      backgroundColor: PALETTE.indicator,
+      opacity: focused ? 1 : 0,
+    }}
+  />
+);
+
+const ICON_SIZE = 35;
+const HEAVY_ICON_SIZE = 34;
+const LIGHT_ICON_SIZE = 28;
+
+// helper to render icon + indicator stacked
+const withIndicator =
+  (renderIcon: (color: string) => React.ReactNode) =>
+  ({ color, focused }: { color: string; focused: boolean }) =>
+    (
+      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+        {renderIcon(color)}
+        <Indicator focused={focused} />
+      </View>
+    );
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       initialRouteName="index"
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: PALETTE.iconActive,
+        tabBarInactiveTintColor: PALETTE.iconInactive,
+        tabBarHideOnKeyboard: true,
 
-        // ✨ key fixes for spacing
-        tabBarStyle: Platform.select({
-          ios: {
-            position: 'absolute',
-            height: 70,
-            paddingHorizontal: 0,  // remove side padding
-            marginHorizontal: 0,   // remove side margin
-            borderTopWidth: 0,
-          },
-          default: {
-            height: 60,
-            paddingHorizontal: 0,
-            marginHorizontal: 0,
-            borderTopWidth: 0,
-          },
-        }),
+        tabBarStyle: {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: Platform.select({ ios: 76, default: 64 }),
+          paddingHorizontal: 0,
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
+          borderRadius: 0,
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          borderWidth: 1.5,
+          borderColor: PALETTE.outline,
+          overflow: 'hidden',
+          // soft shadow that keeps depth without harsh edges
+          shadowColor: PALETTE.shadow,
+          shadowOpacity: 0.3,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 12,
+        },
+        tabBarBackground: () => (
+          <LinearGradient
+            colors={[PALETTE.barBgStart, PALETTE.barBgEnd]}
+            start={{ x: 0.1, y: 0 }}
+            end={{ x: 0.9, y: 1 }}
+            style={{ flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+          />
+        ),
 
-        // make each tab take equal width so no extra gap on the right
+        // equal spacing for all five icons
         tabBarItemStyle: {
           flex: 1,
           alignItems: 'center',
@@ -48,7 +101,9 @@ export default function TabLayout() {
         name="explore"
         options={{
           title: 'Explore',
-          tabBarIcon: ({ color }) => <AntDesign name="flag" size={24} color={color} />,
+          tabBarIcon: withIndicator((color) => (
+            <AntDesign name="flag" size={LIGHT_ICON_SIZE} color={color} />
+          )),
         }}
       />
 
@@ -56,14 +111,14 @@ export default function TabLayout() {
         name="challenges"
         options={{
           title: 'Challenges',
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: withIndicator((color) => (
             <MaterialCommunityIcons
-              size={28}
+              size={HEAVY_ICON_SIZE}
               name="sword"
               color={color}
               style={{ transform: [{ scaleX: -1 }] }}
             />
-          ),
+          )),
         }}
       />
 
@@ -71,7 +126,9 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: withIndicator((color) => (
+            <IconSymbol size={ICON_SIZE} name="house.fill" color={color} />
+          )),
         }}
       />
 
@@ -79,7 +136,9 @@ export default function TabLayout() {
         name="petinventory"
         options={{
           title: 'Pets',
-          tabBarIcon: ({ color }) => <FontAwesome size={28} name="paw" color={color} />,
+          tabBarIcon: withIndicator((color) => (
+            <FontAwesome size={HEAVY_ICON_SIZE} name="paw" color={color} />
+          )),
         }}
       />
 
@@ -87,13 +146,13 @@ export default function TabLayout() {
         name="leaderboard"
         options={{
           title: 'Leaderboard',
-          tabBarIcon: ({ color }) => (
-            <MaterialCommunityIcons name="trophy-outline" size={28} color={color} />
-          ),
+          tabBarIcon: withIndicator((color) => (
+            <MaterialCommunityIcons name="trophy-outline" size={HEAVY_ICON_SIZE} color={color} />
+          )),
         }}
       />
 
-      {/* Hidden screens keep working but don't render a tab button */}
+      {/* Hidden routes */}
       <Tabs.Screen name="settings" options={{ href: null }} />
       <Tabs.Screen name="quick" options={{ href: null }} />
       <Tabs.Screen name="ChallengesPages" options={{ href: null }} />
