@@ -17,7 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '@/src/lib/firebase';
 import { getSteps7d, getCalories7d } from '@/src/lib/userMetrics';
 import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
@@ -335,6 +335,7 @@ type NotificationItem = {
 };
 
 const NOTIFICATION_STORAGE_KEY = 'notifications:lastSeenChallenge';
+const GREETING_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 const toMillis = (value: any): number => {
   try {
@@ -498,17 +499,23 @@ const Home: React.FC = () => {
     const unsubscribe = onSnapshot(
       greetingsRef,
       (snapshot) => {
-        const unseen: NotificationItem[] = [];
-        const docIds: string[] = [];
+        const now = Date.now();
+        const activeGreetings: NotificationItem[] = [];
+        const pendingDocIds: string[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Record<string, any>;
-          if (data?.seen) return;
+          const createdAt = toMillis(data?.createdAt) || now;
+          const isSeen = data?.seen === true;
+          const seenAt = toMillis(data?.seenAt);
+          const retentionAnchor = isSeen ? seenAt || createdAt : null;
+          if (retentionAnchor !== null && now - retentionAnchor >= GREETING_RETENTION_MS) {
+            return;
+          }
           const senderName =
             typeof data?.senderName === 'string' && data.senderName.trim().length > 0
               ? data.senderName
               : 'A fellow adventurer';
-          const createdAt = toMillis(data?.createdAt) || Date.now();
-          unseen.push({
+          activeGreetings.push({
             id: `greeting:${docSnap.id}`,
             title: `${senderName} sent you a greeting`,
             type: 'greeting',
@@ -516,11 +523,13 @@ const Home: React.FC = () => {
             subtitle: new Date(createdAt).toLocaleString(),
             meta: { greetingDocId: docSnap.id },
           });
-          docIds.push(docSnap.id);
+          if (!isSeen) {
+            pendingDocIds.push(docSnap.id);
+          }
         });
-        unseen.sort((a, b) => b.timestamp - a.timestamp);
-        setGreetingNotifications(unseen);
-        setPendingGreetingDocIds(docIds);
+        activeGreetings.sort((a, b) => b.timestamp - a.timestamp);
+        setGreetingNotifications(activeGreetings);
+        setPendingGreetingDocIds(pendingDocIds);
       },
       () => {
         setGreetingNotifications([]);
@@ -552,11 +561,14 @@ const Home: React.FC = () => {
       // ignore
     }
     if (authUser?.uid && pendingGreetingDocIds.length) {
-      const updates = pendingGreetingDocIds.map((docId) =>
-        updateDoc(doc(db, 'Users', authUser.uid, 'greetings', docId), { seen: true }).catch(
-          (err) => {
-            // eslint-disable-next-line no-console
-            console.warn('Failed to mark greeting seen', err);
+        const updates = pendingGreetingDocIds.map((docId) =>
+          updateDoc(doc(db, 'Users', authUser.uid, 'greetings', docId), {
+            seen: true,
+            seenAt: serverTimestamp(),
+          }).catch(
+            (err) => {
+              // eslint-disable-next-line no-console
+              console.warn('Failed to mark greeting seen', err);
           },
         ),
       );
@@ -594,7 +606,7 @@ const Home: React.FC = () => {
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.topBarRow}>
-          {/* Settings button → opens /settings */}
+          {/* Settings button ΓåÆ opens /settings */}
           <TouchableOpacity
             testID="icon-settings"
             hitSlop={16}
@@ -715,8 +727,8 @@ const Home: React.FC = () => {
                     <Text style={styles.notificationTitle}>{item.title}</Text>
                     <Text style={styles.notificationMeta}>
                       {item.type === 'challenge'
-                        ? `${item.category ? `${item.category.toUpperCase()} • ` : ''}${new Date(item.timestamp).toLocaleString()}`
-                        : `Greeting • ${new Date(item.timestamp).toLocaleString()}`}
+                        ? `${item.category ? `${item.category.toUpperCase()} \u2022 ` : ''}${new Date(item.timestamp).toLocaleString()}`
+                        : `Greeting \u2022 ${new Date(item.timestamp).toLocaleString()}`}
                     </Text>
                   </TouchableOpacity>
                 ))}
