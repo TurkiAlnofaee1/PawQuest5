@@ -59,6 +59,7 @@ type Pin = {
   ratingAvg?: number;
   ratingCount?: number;
   petImageUrl?: string;
+  xp?: number;
 };
 
 // ───────────────── constants ─────────────────
@@ -220,6 +221,9 @@ export default function Explore() {
         const distanceMeters = pickNumber(d, "distanceMeters");
         let estimatedTimeMin = pickNumber(d, "estimatedTimeMin");
 
+        // XP: prefer variants.easy.xp if present
+        const xp = toNum((d as any)?.variants?.easy?.xp);
+
         // fallback: compute ETA from distance if missing
         if (estimatedTimeMin === undefined && typeof distanceMeters === "number") {
           estimatedTimeMin = Math.round((distanceMeters / 1000) * WALK_MIN_PER_KM);
@@ -238,6 +242,7 @@ export default function Explore() {
             ratingAvg,
             ratingCount,
             petImageUrl: d.petImageUrl,
+            xp: typeof xp === "number" ? xp : undefined,
           });
         }
       });
@@ -359,8 +364,12 @@ export default function Explore() {
               {/* EXACT FIELDS */}
               <View style={styles.infoGroup}>
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Challenge:</Text>
-                  <Text style={styles.infoValue}>{selected.title || "—"}</Text>
+                  <Text style={styles.infoLabel}>Category:</Text>
+                  <Text style={styles.infoValue}>
+                    {typeof selected.categoryId === "string" && selected.categoryId.length
+                      ? `${selected.categoryId.charAt(0).toUpperCase()}${selected.categoryId.slice(1)}`
+                      : "—"}
+                  </Text>
                 </View>
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Estimated Time:</Text>
@@ -382,6 +391,12 @@ export default function Explore() {
                   <Text style={styles.infoLabel}>Rating:</Text>
                   <Text style={styles.infoValue}>
                     {typeof selected.ratingAvg === "number" ? selected.ratingAvg.toFixed(1) : "—"}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Exp:</Text>
+                  <Text style={styles.infoValue}>
+                    {typeof selected.xp === "number" ? `${selected.xp.toLocaleString()} XP` : "—"}
                   </Text>
                 </View>
               </View>
