@@ -111,6 +111,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 12,
     paddingHorizontal: 14,
+    marginTop: 10,
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 10,
@@ -146,7 +147,7 @@ const styles = StyleSheet.create({
   petImage: {
     width: 220,
     height: 220,
-    marginTop: 8,
+    marginTop: 24,
   },
   petNameBox: {
     marginTop: 12,
@@ -634,6 +635,19 @@ const Home: React.FC = () => {
 
         {/* Equipped pet section */}
         <View style={[styles.body, { alignItems: 'center' }]}>
+          {petImageUrl ? (
+            <Image source={{ uri: petImageUrl }} style={styles.petImage} resizeMode="contain" />
+          ) : null}
+          {petName ? (
+            <TouchableOpacity
+              accessibilityLabel="Open pet inventory"
+              onPress={() => router.push('/(tabs)/petinventory')}
+              activeOpacity={0.85}
+              style={styles.petNameBox}
+            >
+              <Text style={styles.petNameText}>{petName}</Text>
+            </TouchableOpacity>
+          ) : null}
           {petName !== null ? (
             <View style={styles.evolutionBox}>
               <Text style={styles.evolutionTitle}>Evolution Level {Math.max(0, petEvoLevel ?? 0)}</Text>
@@ -655,19 +669,6 @@ const Home: React.FC = () => {
                 );
               })()}
             </View>
-          ) : null}
-          {petImageUrl ? (
-            <Image source={{ uri: petImageUrl }} style={styles.petImage} resizeMode="contain" />
-          ) : null}
-          {petName ? (
-            <TouchableOpacity
-              accessibilityLabel="Open pet inventory"
-              onPress={() => router.push('/(tabs)/petinventory')}
-              activeOpacity={0.85}
-              style={styles.petNameBox}
-            >
-              <Text style={styles.petNameText}>{petName}</Text>
-            </TouchableOpacity>
           ) : null}
         </View>
       </SafeAreaView>
