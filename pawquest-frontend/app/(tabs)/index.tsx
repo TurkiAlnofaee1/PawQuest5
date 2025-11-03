@@ -11,13 +11,16 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, onSnapshot, QueryDocumentSnapshot } from 'firebase/firestore';
-import { db } from '@/src/lib/firebase';
+import { collection, doc, onSnapshot, QueryDocumentSnapshot } from 'firebase/firestore';
+import { auth, db } from '@/src/lib/firebase';
+import { getSteps7d, getCalories7d } from '@/src/lib/userMetrics';
+import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
 import * as Haptics from 'expo-haptics';
 
 const styles = StyleSheet.create({
@@ -100,6 +103,66 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: '100%',
   },
+  evolutionBox: {
+    width: '92%',
+    maxWidth: 520,
+    backgroundColor: 'rgba(255,255,255,0.82)',
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  evolutionTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0B3D1F',
+    marginBottom: 8,
+  },
+  progressBarBg: {
+    height: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(12,46,22,0.18)',
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#22C55E',
+  },
+  progressLabelsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  progressLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0C2E16',
+    opacity: 0.9,
+  },
+  petImage: {
+    width: 220,
+    height: 220,
+    marginTop: 8,
+  },
+  petNameBox: {
+    marginTop: 12,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  petNameText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1b1b1b',
+  },
   notificationBadge: {
     position: 'absolute',
     top: -2,
@@ -181,17 +244,58 @@ const styles = StyleSheet.create({
 type StatsCardProps = { colorScheme: string };
 
 const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
+  const router = useRouter();
   const scheme = (colorScheme === 'dark' ? 'dark' : 'light') as 'light' | 'dark';
   const cardColor = scheme === 'dark' ? '#222' : '#fff';
   const textColor = Colors[scheme].text;
   const mutedColor = scheme === 'dark' ? '#aaa' : '#888';
   const dividerColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.10)';
+
+  const [todayCalories, setTodayCalories] = useState<number>(0);
+  const [todaySteps, setTodaySteps] = useState<number>(0);
+
+  // simple YYYY-MM-DD helper
+  const toIsoDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  useEffect(() => {
+    let active = true;
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      setTodayCalories(0);
+      setTodaySteps(0);
+      return;
+    }
+    const todayKey = toIsoDate(new Date());
+    (async () => {
+      try {
+        const [steps, cals] = await Promise.all([getSteps7d(uid), getCalories7d(uid)]);
+        if (!active) return;
+        const stepsToday = steps.find((d) => d.date === todayKey)?.value ?? 0;
+        const calsToday = cals.find((d) => d.date === todayKey)?.value ?? 0;
+        setTodaySteps(Math.max(0, Math.round(stepsToday)));
+        setTodayCalories(Math.max(0, Math.round(calsToday)));
+      } catch {
+        if (active) {
+          setTodaySteps(0);
+          setTodayCalories(0);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
   return (
     <View testID="stats-card" style={[styles.statsCard, { backgroundColor: cardColor }]}> 
       <View style={styles.statsSegment}>
         <MaterialCommunityIcons name="fire" size={22} color={textColor} style={styles.statsIcon} />
         <View style={styles.statsTextContainer}>
-          <Text testID="stats-calories" accessibilityLabel="Calories 289" style={[styles.statsValue, { color: textColor }]}>289</Text>
+          <Text testID="stats-calories" accessibilityLabel={`Calories ${todayCalories}`} style={[styles.statsValue, { color: textColor }]}>{todayCalories}</Text>
           <Text style={[styles.statsLabel, { color: mutedColor }]}>Calories</Text>
         </View>
       </View>
@@ -199,11 +303,16 @@ const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
       <View style={styles.statsSegment}>
         <MaterialCommunityIcons name="walk" size={22} color={textColor} style={styles.statsIcon} />
         <View style={styles.statsTextContainer}>
-          <Text testID="stats-steps" accessibilityLabel="Steps 2244" style={[styles.statsValue, { color: textColor }]}>2244</Text>
+          <Text testID="stats-steps" accessibilityLabel={`Steps ${todaySteps}`} style={[styles.statsValue, { color: textColor }]}>{todaySteps}</Text>
           <Text style={[styles.statsLabel, { color: mutedColor }]}>Steps</Text>
         </View>
       </View>
-      <TouchableOpacity testID="stats-chevron" style={styles.statsChevron} activeOpacity={1}>
+      <TouchableOpacity
+        testID="stats-chevron"
+        style={styles.statsChevron}
+        activeOpacity={1}
+        onPress={() => router.push('/myprogress')}
+      >
         <MaterialCommunityIcons name="chevron-right" size={24} color={mutedColor} />
       </TouchableOpacity>
     </View>
@@ -232,6 +341,45 @@ const Home: React.FC = () => {
   const [lastSeen, setLastSeen] = useState<number>(0);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
   const initialLoadRef = useRef(true);
+
+  // Equipped pet (from Users/{uid}.equippedPetId -> Users/{uid}/pets/{id})
+  const [petName, setPetName] = useState<string | null>(null);
+  const [petImageUrl, setPetImageUrl] = useState<string | null>(null);
+  const [petEvoLevel, setPetEvoLevel] = useState<number | null>(null);
+  const [petXp, setPetXp] = useState<number | null>(null);
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      setPetName(null);
+      setPetImageUrl(null);
+      setPetEvoLevel(null);
+      setPetXp(null);
+      return;
+    }
+    const unsubProfile = onSnapshot(doc(db, 'Users', uid), (snap) => {
+      const equippedPetId = (snap.data() as any)?.equippedPetId as string | undefined;
+      if (!equippedPetId) {
+        setPetName(null);
+        setPetImageUrl(null);
+        setPetEvoLevel(null);
+        setPetXp(null);
+        return;
+      }
+      // subscribe to the equipped pet doc
+      const unsubPet = onSnapshot(doc(db, 'Users', uid, 'pets', equippedPetId), (petSnap) => {
+        const d: any = petSnap.data() ?? {};
+        setPetName(typeof d?.name === 'string' && d.name.trim() ? d.name : equippedPetId);
+        setPetImageUrl(typeof d?.imageUrl === 'string' ? d.imageUrl : null);
+        setPetEvoLevel(typeof d?.evoLevel === 'number' ? d.evoLevel : 0);
+        setPetXp(typeof d?.xp === 'number' ? d.xp : 0);
+      });
+      // cleanup pet sub-subscription when equippedPetId changes
+      return unsubPet;
+    });
+    return () => {
+      try { unsubProfile(); } catch {}
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -381,9 +529,47 @@ const Home: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Your stats card and body content */}
+        {/* Stats card */}
         <StatsCard colorScheme={colorScheme} />
-        <View style={styles.body} />
+
+        {/* Equipped pet section */}
+        <View style={[styles.body, { alignItems: 'center' }]}>
+          {petName !== null ? (
+            <View style={styles.evolutionBox}>
+              <Text style={styles.evolutionTitle}>Evolution Level {Math.max(0, petEvoLevel ?? 0)}</Text>
+              {(() => {
+                const level = Math.max(0, petEvoLevel ?? 0);
+                const totalXp = Math.max(0, petXp ?? 0);
+                const xpInLevel = totalXp - level * PET_XP_PER_LEVEL;
+                const pct = Math.max(0, Math.min(1, xpInLevel / PET_XP_PER_LEVEL));
+                return (
+                  <>
+                    <View style={styles.progressBarBg}>
+                      <View style={[styles.progressBarFill, { width: `${pct * 100}%` }]} />
+                    </View>
+                    <View style={styles.progressLabelsRow}>
+                      <Text style={styles.progressLabel}>Lvl {level}</Text>
+                      <Text style={styles.progressLabel}>Lvl {level + 1}</Text>
+                    </View>
+                  </>
+                );
+              })()}
+            </View>
+          ) : null}
+          {petImageUrl ? (
+            <Image source={{ uri: petImageUrl }} style={styles.petImage} resizeMode="contain" />
+          ) : null}
+          {petName ? (
+            <TouchableOpacity
+              accessibilityLabel="Open pet inventory"
+              onPress={() => router.push('/(tabs)/petinventory')}
+              activeOpacity={0.85}
+              style={styles.petNameBox}
+            >
+              <Text style={styles.petNameText}>{petName}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </SafeAreaView>
 
       <Modal

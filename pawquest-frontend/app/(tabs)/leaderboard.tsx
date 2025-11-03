@@ -210,11 +210,13 @@ const styles = StyleSheet.create({
   title: { fontSize: 34, fontWeight: '900', color: '#000' },
   pills: { flexDirection: 'row', gap: 10, marginTop: 10 },
   pill: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999 },
-  pillActive: { backgroundColor: '#2E7D32' },
-  pillInactive: { backgroundColor: '#E5F3E7' },
+  // Selected chip: white background, dark text
+  pillActive: { backgroundColor: '#FFFFFF' },
+  // Unselected chip: solid green with white text
+  pillInactive: { backgroundColor: '#2E7D32' },
   pillText: { fontWeight: '800' },
-  pillTextActive: { color: '#fff' },
-  pillTextInactive: { color: '#0B3D1F' },
+  pillTextActive: { color: '#0B3D1F' },
+  pillTextInactive: { color: '#FFFFFF' },
 
   list: { paddingHorizontal: 16, paddingBottom: 30 },
 
