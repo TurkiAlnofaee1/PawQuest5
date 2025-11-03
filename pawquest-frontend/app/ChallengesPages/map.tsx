@@ -3,8 +3,8 @@ import AudioBar, { AudioBarHandle } from "../../components/AudioBar";
 import ChallengeHUD from "../../components/ChallengeHUD";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -91,6 +91,7 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
 
 export default function MapScreen() {
   const router = useRouter();
+  const navigation = useNavigation<any>();
   const { challengeId, difficulty } = useLocalSearchParams<{
     challengeId?: string;
     difficulty?: string;
@@ -125,6 +126,11 @@ export default function MapScreen() {
   const abortRef = useRef<AbortController | null>(null);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
   const runStatsRef = useRef<RunStats>({ startAt: null, distance: 0, lastPoint: null });
+  const startPromptShownRef = useRef(false);
+  const [preStartRouteCoords, setPreStartRouteCoords] = useState<LatLng[]>([]);
+  const preStartAbortRef = useRef<AbortController | null>(null);
+  const preStartLastOriginRef = useRef<LatLng | null>(null);
+  const preStartLastFetchAtRef = useRef(0);
 
   // YOU pulse
   const pulse = useRef(new Animated.Value(0)).current;
@@ -143,6 +149,14 @@ export default function MapScreen() {
 
   // 🎧 audio control
   const audioRef = useRef<AudioBarHandle>(null);
+
+  useEffect(() => {
+    startPromptShownRef.current = false;
+  }, [challengeId]);
+
+  useEffect(() => {
+    navigation.setOptions({ headerShown: !challengeStarted });
+  }, [navigation, challengeStarted]);
 
   // 1) Load challenge from DB
   useEffect(() => {
@@ -256,6 +270,13 @@ export default function MapScreen() {
     if (challengeStarted && nearEnd) audioRef.current?.fadeOut();
   }, [challengeStarted, nearEnd]);
 
+  useEffect(() => {
+    if (!challengeStarted && !nearStart && startPoint && !startPromptShownRef.current) {
+      Alert.alert("Head to the start point", "Go to the start point to start the challenge.");
+      startPromptShownRef.current = true;
+    }
+  }, [challengeStarted, nearStart, startPoint]);
+
   // reset route UI if stop
   useEffect(() => {
     if (!challengeStarted) {
@@ -265,6 +286,106 @@ export default function MapScreen() {
       lastRouteOriginRef.current = null;
     }
   }, [challengeStarted]);
+
+  useEffect(
+    () => () => {
+      if (preStartAbortRef.current) preStartAbortRef.current.abort();
+    },
+    []
+  );
+
+  const fetchPreStartRouteSafe = useCallback(
+    async (origin: LatLng, destination: LatLng) => {
+      const now = Date.now();
+      if (now - preStartLastFetchAtRef.current < RECALC_MIN_GAP_MS) return;
+      preStartLastFetchAtRef.current = now;
+
+      if (preStartAbortRef.current) preStartAbortRef.current.abort();
+      const ac = new AbortController();
+      preStartAbortRef.current = ac;
+
+      try {
+        const url =
+          `https://api.openrouteservice.org/v2/directions/foot-walking` +
+          `?api_key=${encodeURIComponent(ORS_API_KEY)}` +
+          `&start=${origin.longitude},${origin.latitude}` +
+          `&end=${destination.longitude},${destination.latitude}`;
+
+        const res = await fetch(url, {
+          method: "GET",
+          headers: { Accept: "application/geo+json" },
+          signal: ac.signal,
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          console.log("Pre-start ORS error", res.status, text);
+          return;
+        }
+
+        const json = await res.json();
+        const coordsLL: LatLng[] =
+          json?.features?.[0]?.geometry?.coordinates?.map(
+            (pt: [number, number]) => ({ latitude: pt[1], longitude: pt[0] })
+          ) ?? [];
+
+        setPreStartRouteCoords(coordsLL.length > 1 ? coordsLL : []);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") {
+          console.log("Pre-start ORS fetch failed", e?.message ?? e);
+        }
+      } finally {
+        if (preStartAbortRef.current === ac) {
+          preStartAbortRef.current = null;
+        }
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (challengeStarted) {
+      setPreStartRouteCoords([]);
+      preStartLastOriginRef.current = null;
+      preStartLastFetchAtRef.current = 0;
+      if (preStartAbortRef.current) {
+        preStartAbortRef.current.abort();
+        preStartAbortRef.current = null;
+      }
+      return;
+    }
+
+    if (!startPoint || !userLocation) {
+      setPreStartRouteCoords([]);
+      preStartLastOriginRef.current = null;
+      preStartLastFetchAtRef.current = 0;
+      return;
+    }
+
+    const distanceToStart = haversineM(userLocation, startPoint);
+    if (!Number.isFinite(distanceToStart) || distanceToStart < PROXIMITY_M) {
+      setPreStartRouteCoords([]);
+      preStartLastOriginRef.current = null;
+      preStartLastFetchAtRef.current = 0;
+      return;
+    }
+
+    const shouldFetch =
+      !preStartLastOriginRef.current ||
+      haversineM(preStartLastOriginRef.current, userLocation) > MOVE_RECALC_M;
+
+    if (shouldFetch) {
+      preStartLastOriginRef.current = userLocation;
+      fetchPreStartRouteSafe(userLocation, startPoint);
+    }
+  }, [
+    challengeStarted,
+    startPoint?.latitude,
+    startPoint?.longitude,
+    userLocation?.latitude,
+    userLocation?.longitude,
+    fetchPreStartRouteSafe,
+  ]);
 
   // smart fetch (throttle + cancel + cache)
   const fetchRouteSafe = async (origin: LatLng, destination: LatLng) => {
@@ -349,6 +470,12 @@ export default function MapScreen() {
     todoSeg = routeCoords.slice(Math.max(0, idx - 1));
   }
 
+  const hasPreStartRoute = !challengeStarted && preStartRouteCoords.length > 1;
+  const fallbackApproachLine =
+    !challengeStarted && !nearStart && userLocation && startPoint && !hasPreStartRoute
+      ? [userLocation, startPoint]
+      : null;
+
   const remainingM = summary?.distanceM ?? null;
   const totalM = initialRouteDistanceM ?? null;
   const progress =
@@ -375,6 +502,17 @@ export default function MapScreen() {
   return (
     <View style={styles.container}>
       <MapView style={styles.map} region={region} showsUserLocation>
+        {hasPreStartRoute && (
+          <Polyline coordinates={preStartRouteCoords} strokeWidth={4} strokeColor="#2F80ED" />
+        )}
+        {!challengeStarted && fallbackApproachLine && (
+          <Polyline
+            coordinates={fallbackApproachLine}
+            strokeWidth={4}
+            strokeColor="#2F80ED"
+            lineDashPattern={[6, 6]}
+          />
+        )}
         {/* Route after start only */}
         {challengeStarted && doneSeg.length > 1 && (
           <Polyline coordinates={doneSeg} strokeWidth={6} strokeColor="#9AA3AF" />

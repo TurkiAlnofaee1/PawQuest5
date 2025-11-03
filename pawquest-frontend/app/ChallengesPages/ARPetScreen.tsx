@@ -17,6 +17,8 @@ import { auth, db } from "@/src/lib/firebase";
 import { Audio } from "expo-av";
 import { awardPlayerProgress } from "@/src/lib/playerProgress";
 
+export const options = { headerShown: false };
+
 
 type RouteParams = {
   challengeId?: string | string[];

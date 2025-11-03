@@ -64,6 +64,7 @@ export default function RootLayout() {
             <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="ChallengesPages/ChallengeReward" options={{ headerShown: false }} />
+            <Stack.Screen name="ChallengesPages/ARPetScreen" options={{ headerShown: false }} />
             <Stack.Screen
               name="account"
               options={{
