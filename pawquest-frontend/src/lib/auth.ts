@@ -1,4 +1,5 @@
 import { auth, db } from './firebase';
+import { initUserMetrics } from './userMetrics';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -220,6 +221,16 @@ const isNewUser = !snapshot.exists();
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.warn('[auth.ensureUserDocument] failed to create starter pet', err);
+        }
+      }
+
+      // Initialize metrics subcollection with empty docs for last 7 days
+      try {
+        await initUserMetrics(user.uid);
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[auth.ensureUserDocument] failed to init user metrics', err);
         }
       }
     }
