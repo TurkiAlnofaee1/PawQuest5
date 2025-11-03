@@ -1,72 +1,50 @@
-// src/lib/experience.ts
-import {
-  collection,
-  addDoc,
-  serverTimestamp,
-  query,
-  where,
-  getDocs,
-  updateDoc,
-  doc,
-} from "firebase/firestore";
-import { db } from "./firebase"; // 👈 because firebase.ts is in the root
+import { db } from './firebase';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
-export type Category = "City" | "Mountain" | "Desert" | "Sea";
+export type Category = 'City' | 'Mountain' | 'Desert' | 'Sea';
+export type LatLng = { latitude: number; longitude: number };
 
-const EXP = collection(db, "experiences");
-
-// ────────────────────────────────
-// Add new challenge
-// ────────────────────────────────
-export async function createChallenge(data: {
+// -------- Challenges --------
+export type NewChallenge = {
   name: string;
-  location: string;
   category: Category;
   script: string;
-  durationMinutes: number;
   pointsReward: number;
+  durationMinutes: number;
   suggestedReward?: string;
   createdBy: string;
-}) {
-  return addDoc(EXP, {
-    ...data,
-    type: "challenge",
+
+  // map info
+  start: LatLng;
+  end: LatLng;
+  distanceMeters?: number;
+  estimatedTimeMin?: number;
+
+  // media
+  rewardImageUrl?: string;   // Cloudinary URL (optional)
+};
+
+export async function createChallenge(input: NewChallenge) {
+  await addDoc(collection(db, 'experiences'), {
+    ...input,
+    type: 'challenge',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 }
 
-// ────────────────────────────────
-// Add new story
-// ────────────────────────────────
-export async function createStory(data: {
+// -------- Stories --------
+export type NewStory = {
   storyName: string;
   script: string;
   createdBy: string;
-}) {
-  return addDoc(EXP, {
-    ...data,
-    type: "story",
+};
+
+export async function createStory(input: NewStory) {
+  await addDoc(collection(db, 'experiences'), {
+    ...input,
+    type: 'story',
     createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-}
-
-// ────────────────────────────────
-// Fetch all challenges
-// ────────────────────────────────
-export async function fetchChallenges() {
-  const q = query(EXP, where("type", "==", "challenge"));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-}
-
-// ────────────────────────────────
-// Update an existing experience
-// ────────────────────────────────
-export async function updateExperience(id: string, partial: Record<string, any>) {
-  await updateDoc(doc(db, "experiences", id), {
-    ...partial,
     updatedAt: serverTimestamp(),
   });
 }
