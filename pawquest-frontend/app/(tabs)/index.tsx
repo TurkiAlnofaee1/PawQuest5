@@ -17,11 +17,12 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, doc, onSnapshot, QueryDocumentSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { auth, db } from '@/src/lib/firebase';
 import { getSteps7d, getCalories7d } from '@/src/lib/userMetrics';
 import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
 import * as Haptics from 'expo-haptics';
+import { useAuth } from '@/src/hooks/useAuth';
 
 const styles = StyleSheet.create({
   bg: {
@@ -290,8 +291,9 @@ const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
       active = false;
     };
   }, []);
+
   return (
-    <View testID="stats-card" style={[styles.statsCard, { backgroundColor: cardColor }]}> 
+    <View testID="stats-card" style={[styles.statsCard, { backgroundColor: cardColor }]}>
       <View style={styles.statsSegment}>
         <MaterialCommunityIcons name="fire" size={22} color={textColor} style={styles.statsIcon} />
         <View style={styles.statsTextContainer}>
@@ -321,25 +323,49 @@ const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
-type ChallengeNotification = {
+type NotificationItem = {
   id: string;
   title: string;
   category?: string;
   timestamp: number;
+  type: 'challenge' | 'greeting';
+  subtitle?: string;
+  meta?: Record<string, any>;
 };
 
 const NOTIFICATION_STORAGE_KEY = 'notifications:lastSeenChallenge';
 
+const toMillis = (value: any): number => {
+  try {
+    if (value?.toDate) {
+      const d = value.toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) return d.getTime();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = new Date(value);
+      const ms = parsed.getTime();
+      if (!Number.isNaN(ms)) return ms;
+    }
+  } catch {
+    // ignore conversion errors
+  }
+  return 0;
+};
+
 const Home: React.FC = () => {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
+  const { user: authUser } = useAuth();
   const scheme = (colorScheme === 'dark' ? 'dark' : 'light') as 'light' | 'dark';
   const textColor = Colors[scheme].text;
   const iconColor = textColor + 'E6'; // ~0.9 opacity
 
-  const [notifications, setNotifications] = useState<ChallengeNotification[]>([]);
+  const [challengeNotifications, setChallengeNotifications] = useState<NotificationItem[]>([]);
+  const [greetingNotifications, setGreetingNotifications] = useState<NotificationItem[]>([]);
   const [lastSeen, setLastSeen] = useState<number>(0);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
+  const [pendingGreetingDocIds, setPendingGreetingDocIds] = useState<string[]>([]);
   const initialLoadRef = useRef(true);
 
   // Equipped pet (from Users/{uid}.equippedPetId -> Users/{uid}/pets/{id})
@@ -347,6 +373,7 @@ const Home: React.FC = () => {
   const [petImageUrl, setPetImageUrl] = useState<string | null>(null);
   const [petEvoLevel, setPetEvoLevel] = useState<number | null>(null);
   const [petXp, setPetXp] = useState<number | null>(null);
+
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) {
@@ -400,7 +427,7 @@ const Home: React.FC = () => {
   useEffect(() => {
     const colRef = collection(db, 'challenges');
     const unsubscribe = onSnapshot(colRef, (snapshot) => {
-      const additions: ChallengeNotification[] = [];
+      const additions: NotificationItem[] = [];
       snapshot.docChanges().forEach((change) => {
         if (change.type !== 'added') return;
         if (initialLoadRef.current) return;
@@ -419,9 +446,13 @@ const Home: React.FC = () => {
               : typeof data?.category === 'string'
                 ? data.category
                 : undefined,
-          timestamp: createdAt instanceof Date && !Number.isNaN(createdAt.getTime())
-            ? createdAt.getTime()
-            : Date.now(),
+          type: 'challenge',
+          timestamp:
+            createdAt instanceof Date && !Number.isNaN(createdAt.getTime())
+              ? createdAt.getTime()
+              : Date.now(),
+          subtitle: 'New challenge available',
+          meta: { challengeId: change.doc.id },
         });
       });
 
@@ -432,16 +463,20 @@ const Home: React.FC = () => {
 
       if (!additions.length) return;
 
-      setNotifications((prev) => {
+      // Keep notifications only up to 24 hours old.
+      const EXPIRY_MS = 24 * 60 * 60 * 1000;
+      setChallengeNotifications((prev) => {
         const known = new Set(prev.map((item) => item.id));
-        const merged = [...prev];
+        const merged: NotificationItem[] = [...prev];
         additions.forEach((item) => {
           if (!known.has(item.id)) {
             merged.unshift(item);
             known.add(item.id);
           }
         });
-        return merged.slice(0, 24);
+        const now = Date.now();
+        const filtered = merged.filter((it) => now - it.timestamp <= EXPIRY_MS);
+        return filtered.slice(0, 24);
       });
 
       if (Platform.OS !== 'web') {
@@ -451,6 +486,56 @@ const Home: React.FC = () => {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setGreetingNotifications([]);
+      setPendingGreetingDocIds([]);
+      return;
+    }
+    const greetingsRef = collection(db, 'Users', authUser.uid, 'greetings');
+    const unsubscribe = onSnapshot(
+      greetingsRef,
+      (snapshot) => {
+        const unseen: NotificationItem[] = [];
+        const docIds: string[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as Record<string, any>;
+          if (data?.seen) return;
+          const senderName =
+            typeof data?.senderName === 'string' && data.senderName.trim().length > 0
+              ? data.senderName
+              : 'A fellow adventurer';
+          const createdAt = toMillis(data?.createdAt) || Date.now();
+          unseen.push({
+            id: `greeting:${docSnap.id}`,
+            title: `${senderName} sent you a greeting`,
+            type: 'greeting',
+            timestamp: createdAt,
+            subtitle: new Date(createdAt).toLocaleString(),
+            meta: { greetingDocId: docSnap.id },
+          });
+          docIds.push(docSnap.id);
+        });
+        unseen.sort((a, b) => b.timestamp - a.timestamp);
+        setGreetingNotifications(unseen);
+        setPendingGreetingDocIds(docIds);
+      },
+      () => {
+        setGreetingNotifications([]);
+        setPendingGreetingDocIds([]);
+      },
+    );
+    return () => unsubscribe();
+  }, [authUser?.uid]);
+
+  const notifications = useMemo(
+    () =>
+      [...challengeNotifications, ...greetingNotifications].sort(
+        (a, b) => b.timestamp - a.timestamp,
+      ),
+    [challengeNotifications, greetingNotifications],
+  );
 
   const unreadCount = useMemo(
     () => notifications.filter((item) => item.timestamp > lastSeen).length,
@@ -465,25 +550,41 @@ const Home: React.FC = () => {
     } catch {
       // ignore
     }
-  }, []);
+    if (authUser?.uid && pendingGreetingDocIds.length) {
+      const updates = pendingGreetingDocIds.map((docId) =>
+        updateDoc(doc(db, 'Users', authUser.uid, 'greetings', docId), { seen: true }).catch(
+          (err) => {
+            // eslint-disable-next-line no-console
+            console.warn('Failed to mark greeting seen', err);
+          },
+        ),
+      );
+      await Promise.all(updates);
+      setPendingGreetingDocIds([]);
+    }
+  }, [authUser?.uid, pendingGreetingDocIds]);
 
   const handleOpenNotifications = useCallback(() => {
     setNotificationsVisible(true);
-    markNotificationsRead();
-  }, [markNotificationsRead]);
+  }, []);
 
   const handleCloseNotifications = useCallback(() => {
     setNotificationsVisible(false);
-  }, []);
+    markNotificationsRead();
+  }, [markNotificationsRead]);
 
-  const handleOpenChallenge = useCallback(
-    (notification: ChallengeNotification) => {
+  const handleNotificationPress = useCallback(
+    (notification: NotificationItem) => {
       setNotificationsVisible(false);
       markNotificationsRead();
-      router.push({
-        pathname: '/ChallengesPages/ChallengeDetails',
-        params: { id: notification.id, title: notification.title },
-      });
+      if (notification.type === 'challenge') {
+        const challengeId =
+          (notification.meta && notification.meta.challengeId) || notification.id;
+        router.push({
+          pathname: '/ChallengesPages/ChallengeDetails',
+          params: { id: challengeId, title: notification.title },
+        });
+      }
     },
     [markNotificationsRead, router],
   );
@@ -494,22 +595,21 @@ const Home: React.FC = () => {
         <View style={styles.topBarRow}>
           {/* Settings button → opens /settings */}
           <TouchableOpacity
-  testID="icon-settings"
-  hitSlop={16}
-  accessibilityLabel="Open settings"
-  onPress={() => router.push('/(tabs)/settings')}  // 👈 add this line
->
-  <MaterialCommunityIcons
-    name="cog-outline"
-    size={28}
-    color={iconColor}
-  />
-</TouchableOpacity>
+            testID="icon-settings"
+            hitSlop={16}
+            accessibilityLabel="Open settings"
+            onPress={() => router.push('/(tabs)/settings')}
+          >
+            <MaterialCommunityIcons
+              name="cog-outline"
+              size={28}
+              color={iconColor}
+            />
+          </TouchableOpacity>
 
+          <Text style={[styles.topBarTitle, { color: Colors[scheme].text }]}>Home</Text>
 
-          <Text style={[styles.topBarTitle, { color: textColor }]}>Home</Text>
-
-          {/* Example: Notifications icon stays the same */}
+          {/* Notifications */}
           <TouchableOpacity
             testID="icon-bell"
             hitSlop={16}
@@ -583,9 +683,9 @@ const Home: React.FC = () => {
           <View style={styles.notificationsSheet}>
             <View style={styles.notificationsHeaderRow}>
               <View>
-                <Text style={styles.notificationsTitle}>Latest Challenges</Text>
+                <Text style={styles.notificationsTitle}>Notifications</Text>
                 <Text style={styles.notificationsSubtitle}>
-                  {notifications.length ? 'Tap a challenge to view details' : 'No new alerts right now'}
+                  {notifications.length ? 'Tap a notification to view details' : 'No new alerts right now'}
                 </Text>
               </View>
               <TouchableOpacity onPress={handleCloseNotifications} accessibilityLabel="Close notifications">
@@ -594,9 +694,13 @@ const Home: React.FC = () => {
             </View>
 
             {notifications.length === 0 ? (
-              <Text style={styles.notificationsEmpty}>You’re all caught up! 🐾</Text>
+              <Text style={styles.notificationsEmpty}>You're all caught up!</Text>
             ) : (
-              <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                style={{ maxHeight: 320 }}
+                contentContainerStyle={{ gap: 12, paddingBottom: 12 }}
+                showsVerticalScrollIndicator={false}
+              >
                 {notifications.map((item) => (
                   <TouchableOpacity
                     key={`${item.id}-${item.timestamp}`}
@@ -604,13 +708,14 @@ const Home: React.FC = () => {
                       styles.notificationItem,
                       item.timestamp > lastSeen && { backgroundColor: 'rgba(12, 46, 22, 0.18)' },
                     ]}
-                    onPress={() => handleOpenChallenge(item)}
+                    onPress={() => handleNotificationPress(item)}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.notificationTitle}>{item.title}</Text>
                     <Text style={styles.notificationMeta}>
-                      {item.category ? `${item.category.toUpperCase()} · ` : ''}
-                      {new Date(item.timestamp).toLocaleString()}
+                      {item.type === 'challenge'
+                        ? `${item.category ? `${item.category.toUpperCase()} • ` : ''}${new Date(item.timestamp).toLocaleString()}`
+                        : `Greeting • ${new Date(item.timestamp).toLocaleString()}`}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -623,6 +728,4 @@ const Home: React.FC = () => {
   );
 };
 
-
 export default Home;
-

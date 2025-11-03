@@ -36,17 +36,90 @@ import {
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
 const bgByCategory: Record<string, any> = {
   city: require("../../assets/images/Riyadd.jpg"),
-  mountain: require("../../assets/images/ImageBackground.jpg"),
+  mountain: require("../../assets/images/mountainss.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
-  sea: require("../../assets/images/ImageBackground.jpg"),
+  sea: require("../../assets/images/seaa.jpg"),
 };
 
 /* ------------------------ category palettes ------------------------ */
+// Rich, named palette per category to color every element on the page.
+// Keys keep backwards-compat (light/mid/strong/textOnStrong) and add specific roles.
 const PALETTES = {
-  city:    { light: "#E8F1FF", mid: "#C7DAFF", strong: "#3B82F6", textOnStrong: "#FFFFFF" },
-  mountain:{ light: "#EAF8F2", mid: "#C9F0E0", strong: "#10B981", textOnStrong: "#0B281C" },
-  desert:  { light: "#FFF3E7", mid: "#FAD9BB", strong: "#FB923C", textOnStrong: "#2E1A09" },
-  sea:     { light: "#EAF2FF", mid: "#C8D8FF", strong: "#2563EB", textOnStrong: "#FFFFFF" },
+   city: {
+    light: "#EDEEF0",      // subtle concrete gray
+    mid: "#BFC5CE",        // mid gray-blue accent
+    strong: "#4B5563",     // deep slate (headings / buttons)
+    textOnStrong: "#FFFFFF",
+
+    easyBg: "#4B5563",
+    hardBg: "#4B5563",
+    tabBorder: "#BFC5CE",
+    rewardCardBg: "#D2D7DD",
+    rewardSquareBg: "#EDEEF0",
+    pointsPillBg: "#EDEEF0",
+    storyBarBg: "#EDEEF0",
+    statsCardBg: "#EDEEF0",
+    divider: "#000000ff",
+    ctaBg: "#4B5563",
+    ctaText: "#FFFFFF",
+  },
+
+  mountain: {
+    light: "#FFECEB",      // gentle rosy fog
+    mid: "#F8B4AB",        // light red-coral midtone
+    strong: "#E11D48",     // bold crimson accent
+    textOnStrong: "#FFFFFF",
+
+    easyBg: "#f86459ff",
+    hardBg: "#f86459ff",
+    tabBorder: "#F8B4AB",
+    rewardCardBg: "#F8B4AB",
+    rewardSquareBg: "#FFECEB",
+    pointsPillBg: "#FFECEB",
+    storyBarBg: "#FFECEB",
+    statsCardBg: "#FFECEB",
+    divider: "#663232ff",
+    ctaBg: "#f86459ff",
+    ctaText: "#FFFFFF",
+  },
+
+  desert: {
+    light: "#FFF2E0",      // pale sand
+    mid: "#F6C995",        // golden beige
+    strong: "#D97706",     // warm burnt orange
+    textOnStrong: "#2C1500",
+
+    easyBg: "#D97706",
+    hardBg: "#D97706",
+    tabBorder: "#F6C995",
+    rewardCardBg: "#F6C995",
+    rewardSquareBg: "#FFF2E0",
+    pointsPillBg: "#FFF2E0",
+    storyBarBg: "#FFF2E0",
+    statsCardBg: "#FFF2E0",
+    divider: "#834821ff",
+    ctaBg: "#D97706",
+    ctaText: "#2C1500",
+  },
+
+  sea: {
+    light: "#E6F6FF",      // soft sky aqua
+    mid: "#9EDBFF",        // medium turquoise
+    strong: "#0284C7",     // vivid ocean blue
+    textOnStrong: "#FFFFFF",
+
+    easyBg: "#0284C7",
+    hardBg: "#0284C7",
+    tabBorder: "#9EDBFF",
+    rewardCardBg: "#9EDBFF",
+    rewardSquareBg: "#E6F6FF",
+    pointsPillBg: "#E6F6FF",
+    storyBarBg: "#E6F6FF",
+    statsCardBg: "#E6F6FF",
+    divider: "#3f9af0ff",
+    ctaBg: "#0284C7",
+    ctaText: "#FFFFFF",
+  },
 } as const;
 const getPalette = (cat?: string) =>
   PALETTES[(cat || "city").toLowerCase() as keyof typeof PALETTES] ?? PALETTES.city;
@@ -382,7 +455,10 @@ export default function ChallengeDetails() {
                   onPress={() => setTab(t)}
                   style={[
                     styles.tabBtn,
-                    { backgroundColor: active ? pal.strong : pal.light, borderColor: pal.mid },
+                    {
+                      backgroundColor: active ? (t === "easy" ? pal.easyBg : pal.hardBg) : pal.light,
+                      borderColor: pal.tabBorder,
+                    },
                     !enabled && { opacity: 0.45 },
                   ]}
                 >
@@ -401,15 +477,15 @@ export default function ChallengeDetails() {
             style={[
               styles.rewardCard,
               {
-                borderColor: pal.mid,
-                backgroundColor: "rgba(255,255,255,0.96)",
+                borderColor: pal.tabBorder,
+                backgroundColor: pal.rewardCardBg,
                 opacity: rewardAnim,
                 transform: [{ scale: rewardScale }],
               },
             ]}
           >
             <Text style={styles.rewardLabel}>Rewards</Text>
-            <View style={styles.rewardSquare}>
+            <View style={[styles.rewardSquare, { backgroundColor: pal.rewardSquareBg }]}>
               {rewardImage ? (
                 <Image source={{ uri: rewardImage }} style={styles.rewardImage} resizeMode="contain" />
               ) : (
@@ -417,7 +493,7 @@ export default function ChallengeDetails() {
               )}
             </View>
             <Text style={styles.rewardPetName}>{data.rewardPet ?? "-"}</Text>
-            <View style={[styles.pointsPill, { backgroundColor: pal.light, borderColor: pal.mid }]}>
+            <View style={[styles.pointsPill, { backgroundColor: pal.pointsPillBg, borderColor: pal.tabBorder }]}>
               <Text style={styles.pointsText}>
                 {rewardPoints !== null ? `${Math.round(rewardPoints).toLocaleString()} points` : "Reward awaits!"}
               </Text>
@@ -429,7 +505,7 @@ export default function ChallengeDetails() {
             onPress={() => setStoryPickerOpen(true)}
             style={[
               styles.storyBar,
-              { backgroundColor: pal.light, borderColor: pal.mid },
+              { backgroundColor: pal.storyBarBg, borderColor: pal.tabBorder },
             ]}
           >
             <Text style={styles.storyBarText} numberOfLines={1}>
@@ -443,8 +519,8 @@ export default function ChallengeDetails() {
             style={[
               styles.statsCard,
               {
-                borderColor: pal.mid,
-                backgroundColor: "rgba(255,255,255,0.96)",
+                borderColor: pal.tabBorder,
+                backgroundColor: pal.statsCardBg,
                 opacity: statsAnim,
                 transform: [{ translateY: statsTranslateY }],
               },
@@ -459,7 +535,7 @@ export default function ChallengeDetails() {
               <Text style={styles.statItem}>HIIT: {statHiit ?? "—"}</Text>
             </View>
 
-            <View style={[styles.divider, { backgroundColor: pal.mid }]} />
+            <View style={[styles.divider, { backgroundColor: pal.divider }]} />
 
           <View style={styles.metaRow}>
             <Text style={styles.smallDim}>
@@ -486,8 +562,11 @@ export default function ChallengeDetails() {
 
         {/* Fixed footer CTA */}
         <View style={[styles.footer, { paddingBottom: 12 + insets.bottom }]}>
-          <Pressable style={styles.cta} onPress={handleStart}>
-            <Text style={styles.ctaText}>Start Challenge</Text>
+          <Pressable
+            style={[styles.cta, { backgroundColor: pal.ctaBg, borderColor: pal.tabBorder }]}
+            onPress={handleStart}
+          >
+            <Text style={[styles.ctaText, { color: pal.ctaText }]}>Start Challenge</Text>
           </Pressable>
         </View>
 
@@ -510,7 +589,7 @@ export default function ChallengeDetails() {
                     return (
                       <Pressable
                         key={s.id}
-                        style={[styles.modalItem, active && styles.modalItemActive]}
+                        style={[styles.modalItem, active && styles.modalItemActive, active && { backgroundColor: pal.light }]}
                         onPress={() => {
                           setSelectedStoryId(s.id);
                           setStoryPickerOpen(false);
@@ -585,7 +664,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   rewardImage: { width: "100%", height: "100%" },
-  rewardPetName: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#0B3D1F" },
+  rewardPetName: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#000000ff" },
   pointsPill: {
     marginTop: 8,
     paddingHorizontal: 14,
@@ -593,7 +672,7 @@ const styles = StyleSheet.create({
     borderRadius: 9999,
     borderWidth: 1,
   },
-  pointsText: { fontSize: 14, fontWeight: "900", color: "#0B3D1F" },
+  pointsText: { fontSize: 14, fontWeight: "900", color: "#000000ff" },
 
   /* Standalone story bar */
   storyBar: {
@@ -607,7 +686,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  storyBarText: { fontSize: 16, fontWeight: "900", color: "#0B3D1F", flex: 1, marginRight: 10 },
+  storyBarText: { fontSize: 16, fontWeight: "900", color: "#000000ff", flex: 1, marginRight: 10 },
 
   /* Info card */
   statsCard: {
@@ -618,11 +697,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
-  statItem: { fontSize: 14, color: "#111827" },
+  statItem: { fontSize: 14, color: "#000000ff" },
   divider: { height: 1, marginVertical: 12, opacity: 0.6 },
   metaRow: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
-  smallDim: { fontSize: 12, color: "#4B5563" },
-  smallDimOwn: { fontSize: 12, color: "#4B5563", opacity: 0.8, fontStyle: "italic" },
+  smallDim: { fontSize: 12, color: "#252525ff" },
+  smallDimOwn: { fontSize: 12, color: "#252525ff", opacity: 0.8, fontStyle: "italic" },
 
   /* fixed footer CTA */
   footer: {
@@ -657,7 +736,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
-  modalTitle: { fontSize: 16, fontWeight: "900", color: "#0B3D1F", marginBottom: 10 },
+  modalTitle: { fontSize: 16, fontWeight: "900", color: "#000000ff", marginBottom: 10 },
   modalEmpty: { fontSize: 13, color: "#4B5563", paddingVertical: 10 },
   modalItem: {
     paddingVertical: 12,
@@ -665,7 +744,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   modalItemActive: { backgroundColor: "#EFF6FF" },
-  modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
+  modalItemText: { fontSize: 15, fontWeight: "800", color: "#000000ff" },
   modalItemMeta: { fontSize: 12, color: "#4B5563", marginTop: 2 },
 });
 

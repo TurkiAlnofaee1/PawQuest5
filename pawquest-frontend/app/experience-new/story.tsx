@@ -1,4 +1,3 @@
-// app/experience-new/story.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -9,11 +8,10 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  Alert,
 } from 'react-native';
 import TopBar from '@/components/TopBar';
-import ExperienceSegment from '@/components/ExperienceSegment'; // 👈 NEW
-
-// ✅ Firestore helper
+import ExperienceSegment from '@/components/ExperienceSegment';
 import { createStory } from '../../src/lib/experience';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
@@ -25,21 +23,24 @@ export default function StoryFormScreen() {
 
   const onSubmit = async () => {
     if (saving) return;
-    try {
-      if (!storyName.trim()) return alert('Please enter Story Name');
-      if (!storyScript.trim()) return alert('Please add the script');
-      setSaving(true);
 
+    if (!storyName.trim() || !storyScript.trim()) {
+      Alert.alert('Missing info', 'Please fill Story Name and Story Script.');
+      return;
+    }
+
+    try {
+      setSaving(true);
       await createStory({
         storyName: storyName.trim(),
         script: storyScript.trim(),
-        createdBy: 'demo',
+        createdBy: 'demo', // swap with auth uid later
       });
-
-      alert('Story saved!');
-      setStoryName(''); setStoryScript('');
+      Alert.alert('Success', 'Story saved!');
+      setStoryName('');
+      setStoryScript('');
     } catch (e: any) {
-      alert(`Failed to save: ${e?.message ?? e}`);
+      Alert.alert('Failed to save', String(e?.message ?? e));
     } finally {
       setSaving(false);
     }
@@ -51,8 +52,8 @@ export default function StoryFormScreen() {
       <TopBar title="Create an experience  +" backTo="/(tabs)/settings" />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* 👇 Segmented control that switches pages */}
-        <ExperienceSegment />
+        {/* Default tab is Story */}
+        <ExperienceSegment current="story" />
 
         <Text style={styles.formTitle}>Add Story</Text>
 
@@ -70,19 +71,21 @@ export default function StoryFormScreen() {
           style={[styles.textArea, styles.elevated]}
           placeholder="Add the story"
           placeholderTextColor="#6A6A6A"
+          multiline
           value={storyScript}
           onChangeText={setStoryScript}
-          multiline
         />
 
-        <TouchableOpacity
-          style={[styles.submitBtn, styles.elevated]}
-          activeOpacity={0.9}
-          onPress={onSubmit}
-          disabled={saving}
-        >
+        <TouchableOpacity style={[styles.submitBtn, styles.elevated]} onPress={onSubmit} disabled={saving}>
           <Text style={styles.submitText}>{saving ? 'Saving…' : 'Submit'}</Text>
         </TouchableOpacity>
+
+        {Platform.OS === 'web' && (
+          <View style={styles.webBox}>
+            <Text style={{ fontWeight: '700' }}>Note:</Text>
+            <Text>Some features are limited on web. Test on a device when possible.</Text>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -96,21 +99,14 @@ const styles = StyleSheet.create({
   formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 10, marginBottom: 10 },
 
   label: { fontSize: 13, fontWeight: '800', marginLeft: 10, marginBottom: 6, color: '#2c3029' },
-  input: {
-    backgroundColor: 'rgba(203,238,170,0.85)',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 10,
-  },
+  input: { backgroundColor: 'rgba(203,238,170,0.85)', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 12 },
   textArea: {
     backgroundColor: 'rgba(203,238,170,0.85)',
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    height: 140,
+    minHeight: 140,
     textAlignVertical: 'top',
-    marginBottom: 10,
   },
 
   submitBtn: { marginTop: 14, backgroundColor: '#111', borderRadius: 999, alignItems: 'center', paddingVertical: 14 },
@@ -121,4 +117,12 @@ const styles = StyleSheet.create({
     android: { elevation: 3 },
     default: {},
   }) as object,
+
+  webBox: {
+    marginTop: 12,
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    gap: 4,
+  },
 });
