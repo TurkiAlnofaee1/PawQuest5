@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Props = {
   mode: "active" | "complete";
@@ -21,11 +22,13 @@ export default function ChallengeHUD({
   loading,
   onCapture,
 }: Props) {
+  const insets = useSafeAreaInsets();
+  const wrapTop = Math.max(12, insets.top + 6);
   const pct = Math.max(0, Math.min(1, progress || 0));
   const pctText = `${Math.round(pct * 100)}%`;
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { top: wrapTop }]}>
       <View style={styles.card}>
         {/* Top row: distance & time */}
         <View style={styles.row}>
@@ -83,12 +86,7 @@ export default function ChallengeHUD({
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    position: "absolute",
-    top: 24,
-    left: 16,
-    right: 16,
-  },
+  wrap: { position: "absolute", top: 0, left: 16, right: 16 },
   card: {
     backgroundColor: "#A5D9F6",
     borderRadius: 16,

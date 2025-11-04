@@ -17,6 +17,8 @@ import { auth, db } from "@/src/lib/firebase";
 import { Audio } from "expo-av";
 import { awardPlayerProgress } from "@/src/lib/playerProgress";
 
+export const options = { headerShown: false };
+
 
 type RouteParams = {
   challengeId?: string | string[];
@@ -111,20 +113,44 @@ export default function ARPetScreen() {
   const capScale = useRef(new Animated.Value(1)).current;
   const capOpacity = useRef(new Animated.Value(1)).current;
 
-  // --- Idle animation (pulsing + sway)
-  const idleScale = useRef(new Animated.Value(1)).current;
-  const idleShift = useRef(new Animated.Value(0)).current;
-  const idleFloat = useRef(new Animated.Value(0)).current;
-  const idleTilt = useRef(new Animated.Value(0)).current;
+  // --- Idle animation (floating breath + parallax)
+  const idleBreath = useRef(new Animated.Value(0)).current;
   const idleLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  const idleScale = useMemo(
+    () =>
+      idleBreath.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [0.94, 1.06, 0.94],
+      }),
+    [idleBreath],
+  );
+
+  const idleTranslateY = useMemo(
+    () =>
+      idleBreath.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [10, -14, 10],
+      }),
+    [idleBreath],
+  );
+
+  const idleTranslateX = useMemo(
+    () =>
+      idleBreath.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [-6, 6, -6],
+      }),
+    [idleBreath],
+  );
 
   const idleRotation = useMemo(
     () =>
-      idleTilt.interpolate({
-        inputRange: [-1, 1],
-        outputRange: ["-4deg", "4deg"],
+      idleBreath.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: ["-3deg", "3deg", "-3deg"],
       }),
-    [idleTilt],
+    [idleBreath],
   );
 
   const canCapture = useMemo(
@@ -239,70 +265,27 @@ export default function ARPetScreen() {
     if (shouldIdle) {
       idleLoop.current = Animated.loop(
         Animated.sequence([
-          Animated.parallel([
-            Animated.spring(idleScale, {
-              toValue: 1.1,
-              friction: 4,
-              tension: 70,
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleShift, {
-              toValue: 8,
-              duration: 900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleFloat, {
-              toValue: -6,
-              duration: 900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleTilt, {
-              toValue: 1,
-              duration: 900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-          ]),
-          Animated.parallel([
-            Animated.spring(idleScale, {
-              toValue: 0.92,
-              friction: 5,
-              tension: 65,
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleShift, {
-              toValue: -8,
-              duration: 900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleFloat, {
-              toValue: 6,
-              duration: 900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleTilt, {
-              toValue: -1,
-              duration: 900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-          ]),
+          Animated.timing(idleBreath, {
+            toValue: 1,
+            duration: 1800,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(idleBreath, {
+            toValue: 0,
+            duration: 1800,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
         ]),
       );
       idleLoop.current.start();
     }
     return () => {
       idleLoop.current?.stop();
-      idleScale.setValue(1);
-      idleShift.setValue(0);
-      idleFloat.setValue(0);
-      idleTilt.setValue(0);
+      idleBreath.setValue(0);
     };
-  }, [loading, imgLoading, error, petUrl, showCamera, submitting, idleScale, idleShift, idleFloat, idleTilt]);
+  }, [loading, imgLoading, error, petUrl, showCamera, submitting, idleBreath]);
 
   const runCaptureAnimation = useCallback(
     () =>
@@ -491,44 +474,49 @@ export default function ARPetScreen() {
                 </TouchableOpacity>
               </>
             ) : (
-              <>
-                <Animated.View
-                  style={{
-                    transform: [
-                      { translateX: idleShift },
-                      { translateY: idleFloat },
-                      { rotate: idleRotation },
-                      { scale: idleScale },
-                      { scale: capScale },
-                    ],
-                    opacity: capOpacity,
-                  }}
-                >
-                  {petUrl ? (
-                    <Image
-                      source={{ uri: petUrl }}
-                      style={[styles.pet, { alignSelf: "center" }]}
-                      resizeMode="contain"
-                      onLoad={() => setImgLoading(false)}
-                      onLoadEnd={() => setImgLoading(false)}
-                      onError={() => setError("Failed to load pet image")}
-                    />
-                  ) : null}
-                </Animated.View>
+              <View style={styles.overlayContent} pointerEvents="box-none">
+                <View style={styles.petStack} pointerEvents="none">
+                  <View style={styles.petContainer}>
+                    <Animated.View
+                      style={{
+                        transform: [
+                          { translateX: idleTranslateX },
+                          { translateY: idleTranslateY },
+                          { rotate: idleRotation },
+                          { scale: idleScale },
+                          { scale: capScale },
+                        ],
+                        opacity: capOpacity,
+                      }}
+                    >
+                      {petUrl ? (
+                        <Image
+                          source={{ uri: petUrl }}
+                          style={[styles.pet, { alignSelf: "center" }]}
+                          resizeMode="contain"
+                          onLoad={() => setImgLoading(false)}
+                          onLoadEnd={() => setImgLoading(false)}
+                          onError={() => setError("Failed to load pet image")}
+                        />
+                      ) : null}
+                    </Animated.View>
+                  </View>
+                  {imgLoading && <ActivityIndicator size="small" style={styles.petSpinner} />}
+                </View>
 
-                {imgLoading && <ActivityIndicator size="small" />}
-
-                <TouchableOpacity
-                  style={[styles.captureButton, !canCapture && { opacity: 0.5 }]}
-                  onPress={collectPet}
-                  disabled={!canCapture}
-                  activeOpacity={0.9}
-                >
-                  <Text style={styles.captureText}>
-                    {submitting ? "Capturing..." : "Collect Pet"}
-                  </Text>
-                </TouchableOpacity>
-              </>
+                <View style={styles.ctaWrapper} pointerEvents="box-none">
+                  <TouchableOpacity
+                    style={[styles.captureButton, !canCapture && { opacity: 0.6 }]}
+                    onPress={collectPet}
+                    disabled={!canCapture}
+                    activeOpacity={0.9}
+                  >
+                    <Text style={styles.captureText}>
+                      {submitting ? "Capturing..." : "Collect Pet"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             )}
           </View>
         </View>
@@ -547,19 +535,44 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    justifyContent: "center",
     alignItems: "center",
-    paddingBottom: 40,
+    justifyContent: "center",
+    paddingHorizontal: 16,
   },
-  pet: { width: 220, height: 220, marginBottom: 16 },
+  overlayContent: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 420,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  petStack: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+  },
+  petContainer: { alignItems: "center", justifyContent: "center" },
+  petSpinner: { marginTop: 16 },
+  ctaWrapper: {
+    position: "absolute",
+    left: 24,
+    right: 24,
+    bottom: 30,
+  },
+  pet: { width: 230, height: 230, marginBottom: 12 },
   captureButton: {
-    backgroundColor: "#ff9800",
-    paddingVertical: 12,
-    paddingHorizontal: 26,
-    borderRadius: 12,
-    marginTop: 12,
+    backgroundColor: "#66b133ff",
+    height: 56,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
-  captureText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  captureText: { color: "#fff", fontSize: 18, fontWeight: "800" },
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
   permissionText: { color: "#fff", fontSize: 16, textAlign: "center", marginBottom: 12 },
   button: {
