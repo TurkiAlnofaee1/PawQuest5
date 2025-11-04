@@ -87,7 +87,14 @@ export default function StartedChallenge() {
           runRef,
           {
             completedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
             variant,
+            lastCompletedVariant: variant,
+            variants: {
+              [variant]: {
+                completedAt: serverTimestamp(),
+              },
+            },
           },
           { merge: true },
         );

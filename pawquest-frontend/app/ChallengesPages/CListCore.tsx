@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -7,9 +7,10 @@ import {
   Pressable,
   Image,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { db } from "../../src/lib/firebase";
+import { auth, db } from "../../src/lib/firebase";
 import { useAppLocation } from "../../src/hooks";
 import {
   collection,
@@ -20,6 +21,12 @@ import {
   QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { ChallengeStats } from "../../src/lib/firestoreChallenges";
+import { useFocusEffect } from "expo-router";
+import {
+  extractVariantCompletion,
+  isChallengeFullyLocked,
+  VariantCompletionFlags,
+} from "../../src/lib/challengeRuns";
 
 type Challenge = {
   id: string;
@@ -38,6 +45,7 @@ type Challenge = {
   ratingAvg: number;
   ratingCount: number;
   ratingTotal: number;
+  userCompletion?: VariantCompletionFlags;
 };
 
 type Props = {
@@ -143,33 +151,42 @@ export default function CListCore({ category, headerTitle, onSelect, onCountChan
   const [displayItems, setDisplayItems] = useState<Challenge[]>([]);
   const [loading, setLoading] = useState(true);
   const { location: appLocation } = useAppLocation();
+  const [userRuns, setUserRuns] = useState<Record<string, VariantCompletionFlags>>({});
+  const [runsReady, setRunsReady] = useState(false);
+  const userId = auth.currentUser?.uid ?? null;
+
+  const loadUserRuns = useCallback(async () => {
+    setRunsReady(false);
+    if (!userId) {
+      setUserRuns({});
+      setRunsReady(true);
+      return;
+    }
+    try {
+      const runsSnap = await getDocs(collection(db, "Users", userId, "challengeRuns"));
+      const map: Record<string, VariantCompletionFlags> = {};
+      runsSnap.forEach((docSnap) => {
+        map[docSnap.id] = extractVariantCompletion(docSnap.data());
+      });
+      setUserRuns(map);
+    } catch {
+      setUserRuns({});
+    } finally {
+      setRunsReady(true);
+    }
+  }, [userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadUserRuns();
+    }, [loadUserRuns]),
+  );
 
   
 
-  // Fetch challenges and sort using app-level location (fast if provider already populated)
+  // Fetch challenges
   useEffect(() => {
     let mounted = true;
-
-    const toRad = (v: number) => (v * Math.PI) / 180;
-    const haversine = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
-      const R = 6371000; // meters
-      const dLat = toRad(b.lat - a.lat);
-      const dLon = toRad(b.lng - a.lng);
-      const lat1 = toRad(a.lat);
-      const lat2 = toRad(b.lat);
-      const hav = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(hav));
-    };
-
-    const computeSorted = (list: Challenge[], loc: { lat: number; lng: number } | null) => {
-      const augmented = list.map((c) => {
-        const cLoc = c.location;
-        const dist = loc && cLoc ? haversine(loc, cLoc) : c.distanceMeters ?? Infinity;
-        return { ...c, distanceMeters: typeof dist === 'number' && Number.isFinite(dist) ? Math.round(dist) : undefined };
-      });
-      augmented.sort((a, b) => (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity));
-      return augmented;
-    };
 
     (async () => {
       try {
@@ -179,14 +196,11 @@ export default function CListCore({ category, headerTitle, onSelect, onCountChan
         if (!mounted) return;
 
         setItems(list);
-        const sorted = computeSorted(list, appLocation ?? null);
-        setDisplayItems(sorted);
         onCountChange?.(list.length);
       } catch (e) {
         console.error('Load challenges failed:', e);
         if (mounted) {
           setItems([]);
-          setDisplayItems([]);
           onCountChange?.(0);
         }
       } finally {
@@ -198,15 +212,61 @@ export default function CListCore({ category, headerTitle, onSelect, onCountChan
       mounted = false;
       onCountChange?.(0);
     };
-  }, [category, onCountChange, appLocation]);
+  }, [category, onCountChange]);
+
+  useEffect(() => {
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const haversine = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+      const R = 6371000; // meters
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lng - a.lng);
+      const lat1 = toRad(a.lat);
+      const lat2 = toRad(b.lat);
+      const hav = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(hav));
+    };
+
+    const loc = appLocation ?? null;
+    const augmented = items.map((c) => {
+      const cLoc = c.location;
+      const dist = loc && cLoc ? haversine(loc, cLoc) : c.distanceMeters ?? Infinity;
+      const distanceMeters =
+        typeof dist === "number" && Number.isFinite(dist) ? Math.round(dist) : c.distanceMeters;
+      const completion = userRuns[c.id];
+      const fullyLocked = completion ? isChallengeFullyLocked(completion) : false;
+      return {
+        ...c,
+        distanceMeters,
+        isLocked: Boolean(c.isLocked) || fullyLocked,
+        userCompletion: completion,
+      };
+    });
+
+    augmented.sort((a, b) => (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity));
+    setDisplayItems(augmented);
+  }, [items, appLocation, userRuns]);
+
+  const handleCardPress = useCallback(
+    (item: Challenge) => {
+      if (!runsReady) return;
+      if (item.isLocked || (item.userCompletion && isChallengeFullyLocked(item.userCompletion))) {
+        Alert.alert("Challenge locked", "You've already completed this challenge.");
+        return;
+      }
+      onSelect?.(item.id, item.title);
+    },
+    [onSelect, runsReady],
+  );
 
   const renderItem = ({ item }: { item: Challenge }) => (
     <Pressable
-      onPress={() => onSelect?.(item.id, item.title)}
+      onPress={() => handleCardPress(item)}
+      disabled={!runsReady || item.isLocked}
       style={({ pressed }) => [
         styles.card,
         { backgroundColor: CARD_COLORS[category] ?? "rgba(255,255,255,0.95)" },
         pressed && { opacity: 0.96 },
+        (item.isLocked || !runsReady) && { opacity: 0.6 },
       ]}
     >
       <View style={styles.left}>

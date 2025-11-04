@@ -4,7 +4,7 @@ import ChallengeHUD from "../../components/ChallengeHUD";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -19,13 +19,18 @@ import {
 import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
 
 // 🔥 Firestore
-import { db } from "../../src/lib/firebase";
+import { auth, db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import {
   beginChallengeSession,
   endChallengeSessionAndPersist,
   onChallengeViolation,
 } from "../../src/lib/backgroundTracking";
+import {
+  extractVariantCompletion,
+  isChallengeFullyLocked,
+  VariantCompletionFlags,
+} from "../../src/lib/challengeRuns";
 
 // 🔑 ORS key (unchanged)
 const ORS_API_KEY =
@@ -49,12 +54,67 @@ type RunStats = {
   lastPoint: LatLng | null;
 };
 
+type GeoPointLike = {
+  latitude?: number;
+  longitude?: number;
+  _lat?: number;
+  _long?: number;
+  lat?: number;
+  lng?: number;
+};
+
+type VariantDoc = {
+  start?: GeoPointLike;
+  end?: GeoPointLike;
+  [key: string]: any;
+};
+
 type ChallengeDoc = {
   title?: string;
-  // Adjust these if you store as GeoPoint or lat/lng keys:
-  start?: { latitude: number; longitude: number };
-  end?: { latitude: number; longitude: number };
+  // Coordinates can live either at the root or inside variants.[difficulty]
+  start?: GeoPointLike;
+  end?: GeoPointLike;
   audioUrl?: string; // remote mp3 (optional)
+  variants?: {
+    easy?: VariantDoc;
+    hard?: VariantDoc;
+    [key: string]: VariantDoc | undefined;
+  };
+  [key: string]: any;
+};
+
+const toLatLng = (value: unknown): LatLng | null => {
+  if (!value || typeof value !== "object") return null;
+  const geo = value as GeoPointLike;
+  const lat =
+    typeof geo.latitude === "number"
+      ? geo.latitude
+      : typeof geo._lat === "number"
+      ? geo._lat
+      : typeof geo.lat === "number"
+      ? geo.lat
+      : undefined;
+  const lng =
+    typeof geo.longitude === "number"
+      ? geo.longitude
+      : typeof geo._long === "number"
+      ? geo._long
+      : typeof geo.lng === "number"
+      ? geo.lng
+      : undefined;
+  if (typeof lat === "number" && Number.isFinite(lat) && typeof lng === "number" && Number.isFinite(lng)) {
+    return { latitude: lat, longitude: lng };
+  }
+  return null;
+};
+
+const readVariant = (doc: ChallengeDoc, key: string | undefined): VariantDoc | null => {
+  if (!key) return null;
+  const fromVariants = doc.variants?.[key];
+  if (fromVariants && typeof fromVariants === "object") return fromVariants;
+  const topLevel = doc[key];
+  if (topLevel && typeof topLevel === "object") return topLevel as VariantDoc;
+  return null;
 };
 
 // math helpers
@@ -97,18 +157,26 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
 export default function MapScreen() {
   const router = useRouter();
   const navigation = useNavigation<any>();
-  const { challengeId, difficulty } = useLocalSearchParams<{
-    challengeId?: string;
-    difficulty?: string;
+  const { challengeId: challengeIdParam, difficulty } = useLocalSearchParams<{
+    challengeId?: string | string[];
+    difficulty?: string | string[];
   }>();
+  const challengeId = Array.isArray(challengeIdParam) ? challengeIdParam[0] ?? null : challengeIdParam ?? null;
+  const difficultyValue = Array.isArray(difficulty) ? difficulty[0] : difficulty;
   const variantParam =
-    typeof difficulty === "string" && difficulty.toLowerCase() === "hard" ? "hard" : "easy";
+    typeof difficultyValue === "string" && difficultyValue.toLowerCase() === "hard" ? "hard" : "easy";
+  const userId = auth.currentUser?.uid ?? null;
 
   // From DB
   const [challengeTitle, setChallengeTitle] = useState<string | undefined>(undefined);
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [endPoint, setEndPoint] = useState<LatLng | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
+  const [variantCompletions, setVariantCompletions] = useState<VariantCompletionFlags>({
+    easy: false,
+    hard: false,
+  });
+  const [locksReady, setLocksReady] = useState(false);
 
   // Map/Location
   const [region, setRegion] = useState<any>(null);
@@ -127,6 +195,7 @@ export default function MapScreen() {
   const [routeLoading, setRouteLoading] = useState(false);
 
   // smart fetch
+  const lockAlertShownRef = useRef(false);
   const lastFetchAtRef = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
@@ -168,6 +237,77 @@ export default function MapScreen() {
     navigation.setOptions({ headerShown: !challengeStarted });
   }, [navigation, challengeStarted]);
 
+  const challengeLocked = useMemo(
+    () => isChallengeFullyLocked(variantCompletions),
+    [variantCompletions],
+  );
+
+  const variantLocked = useMemo(() => {
+    if (challengeLocked) return true;
+    return variantParam === "hard" ? variantCompletions.hard : variantCompletions.easy;
+  }, [challengeLocked, variantParam, variantCompletions]);
+
+  const canStartChallenge = locksReady && !challengeLocked && !variantLocked;
+
+  useEffect(() => {
+    let active = true;
+
+    if (!challengeId || !userId) {
+      setVariantCompletions({ easy: false, hard: false });
+      setLocksReady(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    setLocksReady(false);
+    (async () => {
+      try {
+        const runRef = doc(db, "Users", userId, "challengeRuns", challengeId);
+        const snap = await getDoc(runRef);
+        if (!active) return;
+        if (snap.exists()) {
+          setVariantCompletions(extractVariantCompletion(snap.data()));
+        } else {
+          setVariantCompletions({ easy: false, hard: false });
+        }
+      } catch {
+        if (active) {
+          setVariantCompletions({ easy: false, hard: false });
+        }
+      } finally {
+        if (active) setLocksReady(true);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [challengeId, userId]);
+
+  useEffect(() => {
+    if (!locksReady) return;
+    if (!(challengeLocked || variantLocked)) {
+      lockAlertShownRef.current = false;
+      return;
+    }
+    if (lockAlertShownRef.current) return;
+    lockAlertShownRef.current = true;
+
+    const message = challengeLocked
+      ? "You've already completed this challenge on both easy and hard modes."
+      : `You've already completed the ${variantParam === "hard" ? "hard" : "easy"} mode.`;
+
+    Alert.alert("Challenge locked", message, [
+      {
+        text: "OK",
+        onPress: () => {
+          router.replace("/(tabs)/challenges");
+        },
+      },
+    ]);
+  }, [locksReady, challengeLocked, variantLocked, variantParam, router]);
+
   // 1) Load challenge from DB
   useEffect(() => {
     let isMounted = true;
@@ -181,12 +321,25 @@ export default function MapScreen() {
         }
         const data = snap.data() as ChallengeDoc;
 
-        if (data.start && data.end) {
-          const s = { latitude: data.start.latitude, longitude: data.start.longitude };
-          const e = { latitude: data.end.latitude, longitude: data.end.longitude };
+        const preferredVariant = readVariant(data, variantParam);
+        const easyVariant = variantParam === "easy" ? preferredVariant : readVariant(data, "easy");
+        const hardVariant = variantParam === "hard" ? preferredVariant : readVariant(data, "hard");
+
+        const startCandidate =
+          toLatLng(preferredVariant?.start) ??
+          toLatLng(data.start) ??
+          toLatLng(easyVariant?.start) ??
+          toLatLng(hardVariant?.start);
+        const endCandidate =
+          toLatLng(preferredVariant?.end) ??
+          toLatLng(data.end) ??
+          toLatLng(easyVariant?.end) ??
+          toLatLng(hardVariant?.end);
+
+        if (startCandidate && endCandidate) {
           if (!isMounted) return;
-          setStartPoint(s);
-          setEndPoint(e);
+          setStartPoint(startCandidate);
+          setEndPoint(endCandidate);
         } else {
           Alert.alert("Invalid data", "Challenge is missing start/end coordinates.");
         }
@@ -202,7 +355,7 @@ export default function MapScreen() {
     return () => {
       isMounted = false;
     };
-  }, [challengeId]);
+  }, [challengeId, variantParam]);
 
   // 2) Start fresh (avoid showing old route before Start) — key per challenge
   const cacheKey = `route:${challengeId || "default"}`;
@@ -292,11 +445,11 @@ export default function MapScreen() {
 
   // nudge to go to start
   useEffect(() => {
-    if (!challengeStarted && !nearStart && startPoint && !startPromptShownRef.current) {
+    if (!challengeStarted && !nearStart && startPoint && !startPromptShownRef.current && canStartChallenge) {
       Alert.alert("Head to the start point", "Go to the start point to start the challenge.");
       startPromptShownRef.current = true;
     }
-  }, [challengeStarted, nearStart, startPoint]);
+  }, [challengeStarted, nearStart, startPoint, canStartChallenge]);
 
   // reset route UI if stop
   useEffect(() => {
@@ -635,10 +788,17 @@ export default function MapScreen() {
       )}
 
       {/* Start only when inside 20 m of start */}
-      {!challengeStarted && nearStart && (
+      {!challengeStarted && nearStart && canStartChallenge && (
         <TouchableOpacity
           style={styles.startBtn}
           onPress={async () => {
+            if (!canStartChallenge) {
+              const lockMsg = challengeLocked
+                ? "You've already completed this challenge on both easy and hard modes."
+                : `You've already completed the ${variantParam === "hard" ? "hard" : "easy"} mode.`;
+              Alert.alert("Challenge locked", lockMsg);
+              return;
+            }
             setChallengeStarted(true);
             // start background tracking session
             void beginChallengeSession();

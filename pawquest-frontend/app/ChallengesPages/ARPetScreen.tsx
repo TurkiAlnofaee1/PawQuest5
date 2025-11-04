@@ -341,14 +341,30 @@ export default function ARPetScreen() {
       if (uid && challengeId) {
         try {
           const runRef = doc(db, "Users", uid, "challengeRuns", challengeId);
+          const variantCompletion: Record<string, any> = {
+            completedAt: serverTimestamp(),
+          };
+          if (typeof challengeMeta.variant?.xp === "number")
+            variantCompletion.earnedXp = challengeMeta.variant.xp;
+          if (actualDistanceMeters !== null) variantCompletion.distanceMeters = actualDistanceMeters;
+          if (actualDurationSec !== null) variantCompletion.durationSec = actualDurationSec;
+          if (actualSteps !== null) variantCompletion.steps = actualSteps;
+          if (actualCalories !== null) variantCompletion.calories = actualCalories;
+
           const payload: Record<string, any> = {
             completedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
             variant: variantKey,
+            lastCompletedVariant: variantKey,
+            variants: {
+              [variantKey]: variantCompletion,
+            },
           };
           if (challengeMeta.variant?.xp) payload.earnedXp = challengeMeta.variant.xp;
           if (challengeMeta.rewardPet) payload.rewardPet = challengeMeta.rewardPet;
           if (actualDistanceMeters !== null) payload.distanceMeters = actualDistanceMeters;
           if (actualDurationSec !== null) payload.durationSec = actualDurationSec;
+
           await setDoc(runRef, payload, { merge: true });
         } catch (err) {
           if (__DEV__) {

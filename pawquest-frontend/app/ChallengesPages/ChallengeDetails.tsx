@@ -14,6 +14,7 @@ import {
   SafeAreaView,
   Platform,
   Modal,
+  Alert,
 } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -31,6 +32,11 @@ import {
   getChallengeRatingStats,
   getUserChallengeRating,
 } from "../../src/lib/firestoreChallenges";
+import {
+  extractVariantCompletion,
+  isChallengeFullyLocked,
+  VariantCompletionFlags,
+} from "../../src/lib/challengeRuns";
 
 /* ------------------------ category backgrounds ------------------------ */
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
@@ -166,6 +172,13 @@ export default function ChallengeDetails() {
   const router = useRouter();
   const { id, category, title } =
     useLocalSearchParams<{ id?: string; category?: string; title?: string }>();
+  const userId = auth.currentUser?.uid ?? null;
+  const normalizedId = useMemo(() => {
+    if (typeof id === "string") return id;
+    if (Array.isArray(id)) return id[0] ?? null;
+    if (typeof id === "number") return String(id);
+    return null;
+  }, [id]);
 
   const [data, setData] = useState<ChallengeDoc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,6 +190,12 @@ export default function ChallengeDetails() {
   const [stories, setStories] = useState<Story[]>([]);
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [variantCompletions, setVariantCompletions] = useState<VariantCompletionFlags>({
+    easy: false,
+    hard: false,
+  });
+  const [locksReady, setLocksReady] = useState(false);
+  const lockedNavRef = useRef(false);
 
   const headerAnim = useRef(new Animated.Value(0)).current;
   const rewardAnim = useRef(new Animated.Value(0)).current;
@@ -187,10 +206,10 @@ export default function ChallengeDetails() {
     let active = true;
     (async () => {
       try {
-        if (!id) return;
+        if (!normalizedId) return;
 
         // challenge
-        const ref = doc(db, "challenges", String(id));
+        const ref = doc(db, "challenges", normalizedId);
         const snap = await getDoc(ref);
         if (snap.exists() && active) {
           const d = snap.data() as ChallengeDoc;
@@ -199,7 +218,7 @@ export default function ChallengeDetails() {
         }
 
         // optional stories subcollection
-        const sref = collection(db, "challenges", String(id), "stories");
+        const sref = collection(db, "challenges", normalizedId, "stories");
         const ssnap = await getDocs(sref);
         const list: Story[] = ssnap.docs.map((d: QueryDocumentSnapshot) => {
           const raw = d.data() as any;
@@ -226,7 +245,7 @@ export default function ChallengeDetails() {
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [normalizedId]);
 
   useEffect(() => {
     if (loading || !data) return;
@@ -258,15 +277,6 @@ export default function ChallengeDetails() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      const normalizedId =
-        typeof id === "string"
-          ? id
-          : Array.isArray(id)
-          ? id[0]
-          : typeof id === "number"
-          ? String(id)
-          : null;
-
       if (!normalizedId) {
         setRatingStats(null);
         setUserRating(null);
@@ -301,8 +311,76 @@ export default function ChallengeDetails() {
       return () => {
         active = false;
       };
-    }, [id]),
+    }, [normalizedId]),
   );
+
+  useEffect(() => {
+    let active = true;
+
+    if (!normalizedId || !userId) {
+      setVariantCompletions({ easy: false, hard: false });
+      setLocksReady(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    setLocksReady(false);
+    (async () => {
+      try {
+        const runRef = doc(db, "Users", userId, "challengeRuns", normalizedId);
+        const snap = await getDoc(runRef);
+        if (!active) return;
+        if (snap.exists()) {
+          const flags = extractVariantCompletion(snap.data());
+          setVariantCompletions(flags);
+        } else {
+          setVariantCompletions({ easy: false, hard: false });
+        }
+      } catch {
+        if (active) {
+          setVariantCompletions({ easy: false, hard: false });
+        }
+      } finally {
+        if (active) setLocksReady(true);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [normalizedId, userId]);
+
+  const challengeLocked = useMemo(
+    () => isChallengeFullyLocked(variantCompletions),
+    [variantCompletions],
+  );
+
+  const currentVariantLocked = useMemo(() => {
+    if (challengeLocked) return true;
+    return tab === "hard" ? variantCompletions.hard : variantCompletions.easy;
+  }, [challengeLocked, tab, variantCompletions]);
+
+  const startDisabled = !locksReady || currentVariantLocked;
+  const startLabel = !locksReady
+    ? "Loading…"
+    : challengeLocked || currentVariantLocked
+    ? "Locked"
+    : "Start Challenge";
+
+  useEffect(() => {
+    if (!locksReady || !challengeLocked || lockedNavRef.current) return;
+    lockedNavRef.current = true;
+    Alert.alert("Challenge locked", "You've already completed both difficulties.", [
+      {
+        text: "OK",
+        onPress: () => {
+          if (router.canGoBack()) router.back();
+          else router.replace("/(tabs)/challenges");
+        },
+      },
+    ]);
+  }, [locksReady, challengeLocked, router]);
 
   const effectiveCategory = (category || data?.categoryId || "city").toString().toLowerCase();
   const pal = getPalette(effectiveCategory);
@@ -370,10 +448,27 @@ export default function ChallengeDetails() {
   const statHiit = selectedStory?.hiitType ?? variant?.hiitType;
 
   const handleStart = () => {
+    if (!normalizedId) {
+      Alert.alert("Missing challenge", "We couldn't load this challenge. Please try again.");
+      return;
+    }
+    if (!locksReady) {
+      Alert.alert("Please wait", "Checking your challenge status…");
+      return;
+    }
+    if (challengeLocked) {
+      Alert.alert("Challenge locked", "You've already completed both easy and hard modes.");
+      return;
+    }
+    if (currentVariantLocked) {
+      const label = tab === "easy" ? "Easy" : "Hard";
+      Alert.alert("Difficulty locked", `You've already completed the ${label} mode.`);
+      return;
+    }
     router.push({
       pathname: "/ChallengesPages/map",
       params: {
-        challengeId: String(id),
+        challengeId: normalizedId,
         title: data?.title || title || "Challenge",
         category: effectiveCategory,
         difficulty: tab,
@@ -563,10 +658,15 @@ export default function ChallengeDetails() {
         {/* Fixed footer CTA */}
         <View style={[styles.footer, { paddingBottom: 12 + insets.bottom }]}>
           <Pressable
-            style={[styles.cta, { backgroundColor: pal.ctaBg, borderColor: pal.tabBorder }]}
+            style={[
+              styles.cta,
+              { backgroundColor: pal.ctaBg, borderColor: pal.tabBorder },
+              startDisabled && styles.ctaDisabled,
+            ]}
             onPress={handleStart}
+            disabled={startDisabled}
           >
-            <Text style={[styles.ctaText, { color: pal.ctaText }]}>Start Challenge</Text>
+            <Text style={[styles.ctaText, { color: pal.ctaText }]}>{startLabel}</Text>
           </Pressable>
         </View>
 
@@ -721,6 +821,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.12)",
   },
   ctaText: { fontSize: 16, fontWeight: "900", color: "#0b3d1f" },
+  ctaDisabled: { opacity: 0.6 },
 
   // Picker modal
   modalBackdrop: {
