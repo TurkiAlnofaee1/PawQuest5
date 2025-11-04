@@ -21,6 +21,7 @@ import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
 // 🔥 Firestore
 import { db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
+import { beginChallengeSession, endChallengeSessionAndPersist, onChallengeViolation } from "../../src/lib/backgroundTracking";
 
 // 🔑 ORS key (unchanged)
 const ORS_API_KEY =
@@ -125,6 +126,7 @@ export default function MapScreen() {
   const abortRef = useRef<AbortController | null>(null);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
   const runStatsRef = useRef<RunStats>({ startAt: null, distance: 0, lastPoint: null });
+  const navigatingRef = useRef<boolean>(false);
 
   // YOU pulse
   const pulse = useRef(new Animated.Value(0)).current;
@@ -265,6 +267,27 @@ export default function MapScreen() {
       lastRouteOriginRef.current = null;
     }
   }, [challengeStarted]);
+
+  // Overspeed handler: abort challenge and return home without rewards
+  useEffect(() => {
+    const off = onChallengeViolation(() => {
+      if (!challengeStarted) return;
+      setChallengeStarted(false);
+      audioRef.current?.fadeOut();
+      Alert.alert(
+        'Warning',
+        'Using transportation is not allowed.',
+        [
+          {
+            text: 'I understand',
+            onPress: () => router.replace('/(tabs)'),
+          },
+        ],
+        { cancelable: false },
+      );
+    });
+    return () => { try { off(); } catch {} };
+  }, [challengeStarted, router]);
 
   // smart fetch (throttle + cancel + cache)
   const fetchRouteSafe = async (origin: LatLng, destination: LatLng) => {
@@ -408,8 +431,15 @@ export default function MapScreen() {
           progress={progress}
           instruction={summary?.nextInstruction}
           loading={routeLoading}
-          onCapture={() => {
+          onCapture={async () => {
+            if (navigatingRef.current) return;
+            navigatingRef.current = true;
             audioRef.current?.fadeOut();
+            // finalize background tracking session and persist metrics
+            let sessionTotals: { steps: number; calories: number } = { steps: 0, calories: 0 };
+            try {
+              sessionTotals = await endChallengeSessionAndPersist();
+            } catch {}
             const stats = runStatsRef.current;
             const durationSec =
               stats.startAt !== null ? Math.max(0, Math.round((Date.now() - stats.startAt) / 1000)) : null;
@@ -426,13 +456,11 @@ export default function MapScreen() {
             if (challengeTitle) baseParams.title = challengeTitle;
             if (durationSec !== null) baseParams.durationSec = String(durationSec);
             if (roundedDistance !== null) baseParams.distanceM = String(roundedDistance);
+            if (Number.isFinite(sessionTotals.steps)) baseParams.actualSteps = String(Math.max(0, Math.round(sessionTotals.steps)));
+            if (Number.isFinite(sessionTotals.calories)) baseParams.actualCalories = String(Math.max(0, Math.round(sessionTotals.calories)));
 
-            if (challengeId) {
-              baseParams.challengeId = challengeId;
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
-            } else {
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
-            }
+            if (challengeId) baseParams.challengeId = challengeId;
+            router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
           }}
         />
       )}
@@ -443,6 +471,8 @@ export default function MapScreen() {
           style={styles.startBtn}
           onPress={async () => {
             setChallengeStarted(true);
+            // start background tracking session
+            void beginChallengeSession();
             runStatsRef.current = {
               startAt: Date.now(),
               distance: 0,

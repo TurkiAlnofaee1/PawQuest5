@@ -29,6 +29,8 @@ type RouteParams = {
   variantXp?: string | string[];
   calories?: string | string[];
   steps?: string | string[];
+  actualCalories?: string | string[];
+  actualSteps?: string | string[];
   estimatedTimeMin?: string | string[];
   variantDistanceM?: string | string[];
   durationSec?: string | string[];
@@ -338,7 +340,10 @@ export default function ChallengeReward() {
       });
     }
 
-    if (typeof variant.calories === "number") {
+    const actualCals = toNumber(toSingle(params.actualCalories));
+    if (typeof actualCals === "number" && actualCals >= 0) {
+      items.push({ key: "calories", icon: "flame-outline", label: `${Math.round(actualCals)} cal` });
+    } else if (typeof variant.calories === "number") {
       items.push({
         key: "calories",
         icon: "flame-outline",
@@ -346,7 +351,8 @@ export default function ChallengeReward() {
       });
     }
 
-    const stepsLabel = formatSteps(variant.steps);
+    const actualSteps = toNumber(toSingle(params.actualSteps));
+    const stepsLabel = formatSteps(typeof actualSteps === "number" ? actualSteps : variant.steps);
     if (stepsLabel) {
       items.push({
         key: "steps",
@@ -356,7 +362,7 @@ export default function ChallengeReward() {
     }
 
     return items;
-  }, [actualDistanceMeters, actualDurationSec, challengeMeta.variant]);
+  }, [actualDistanceMeters, actualDurationSec, challengeMeta.variant, params.actualCalories, params.actualSteps]);
 
   const backgroundSource = (() => {
     const byCat = categoryKey ? BG_BY_CATEGORY[categoryKey] : undefined;

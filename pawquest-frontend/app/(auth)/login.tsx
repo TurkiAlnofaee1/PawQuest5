@@ -97,6 +97,12 @@ export default function LoginScreen() {
                 Create an account
               </Text>
             </Text>
+            <Text style={[styles.helper, { marginTop: 6 }]}>
+              Forgot password?{' '}
+              <Text style={styles.link} onPress={() => router.push('/reset' as any)}>
+                Reset password
+              </Text>
+            </Text>
           </View>
 
           <View style={styles.social}>
