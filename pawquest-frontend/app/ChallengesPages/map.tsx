@@ -21,6 +21,11 @@ import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
 // 🔥 Firestore
 import { db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
+import {
+  beginChallengeSession,
+  endChallengeSessionAndPersist,
+  onChallengeViolation,
+} from "../../src/lib/backgroundTracking";
 
 // 🔑 ORS key (unchanged)
 const ORS_API_KEY =
@@ -70,8 +75,8 @@ const formatDuration = (s: number) => {
   const min = Math.round(s / 60);
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${h}h ${m}m`;
+  const m2 = min % 60;
+  return `${h}h ${m2}m`;
 };
 function nearestRouteIndex(route: LatLng[], you: LatLng): number {
   if (route.length === 0) return 0;
@@ -126,6 +131,11 @@ export default function MapScreen() {
   const abortRef = useRef<AbortController | null>(null);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
   const runStatsRef = useRef<RunStats>({ startAt: null, distance: 0, lastPoint: null });
+
+  // 🧭 navigation guard used in onCapture
+  const navigatingRef = useRef<boolean>(false);
+
+  // Pre-start (show route from YOU to Start before start)
   const startPromptShownRef = useRef(false);
   const [preStartRouteCoords, setPreStartRouteCoords] = useState<LatLng[]>([]);
   const preStartAbortRef = useRef<AbortController | null>(null);
@@ -163,8 +173,7 @@ export default function MapScreen() {
     let isMounted = true;
     (async () => {
       try {
-        // Require an id in the route: /map?challengeId=abc123
-        const id = challengeId || "default"; // fallback if you want a default doc
+        const id = challengeId || "default";
         const snap = await getDoc(doc(db, "challenges", id));
         if (!snap.exists()) {
           Alert.alert("Not found", "Challenge document does not exist.");
@@ -172,8 +181,6 @@ export default function MapScreen() {
         }
         const data = snap.data() as ChallengeDoc;
 
-        // If using GeoPoint: const gp = data.startGeo as firebase.firestore.GeoPoint;
-        // setStartPoint({ latitude: gp.latitude, longitude: gp.longitude });
         if (data.start && data.end) {
           const s = { latitude: data.start.latitude, longitude: data.start.longitude };
           const e = { latitude: data.end.latitude, longitude: data.end.longitude };
@@ -192,7 +199,9 @@ export default function MapScreen() {
         Alert.alert("DB error", e?.message ?? "Failed to load challenge.");
       }
     })();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [challengeId]);
 
   // 2) Start fresh (avoid showing old route before Start) — key per challenge
@@ -232,44 +241,56 @@ export default function MapScreen() {
           if (startPoint) setNearStart(haversineM(c, startPoint) < PROXIMITY_M);
           if (endPoint) setNearEnd(haversineM(c, endPoint) < PROXIMITY_M);
 
-          if (challengeStarted && endPoint) {
-            const stats = runStatsRef.current;
-            if (!stats.startAt) {
-              stats.startAt = Date.now();
-            }
-            if (stats.lastPoint) {
-              const delta = haversineM(stats.lastPoint, c);
-              if (Number.isFinite(delta) && delta > 0.2) {
-                stats.distance += delta;
-              }
-            }
-            stats.lastPoint = c;
+          if (!challengeStarted) return;
 
-            if (
-              !lastRouteOriginRef.current ||
-              haversineM(lastRouteOriginRef.current, c) > MOVE_RECALC_M
-            ) {
-              fetchRouteSafe(c, endPoint);
+          // running stats
+          const stats = runStatsRef.current;
+          if (!stats.startAt) {
+            stats.startAt = Date.now();
+          }
+          if (stats.lastPoint) {
+            const delta = haversineM(stats.lastPoint, c);
+            if (Number.isFinite(delta) && delta > 0.2) {
+              stats.distance += delta;
             }
+          }
+          stats.lastPoint = c;
+
+          // dynamic recalc
+          if (!lastRouteOriginRef.current || haversineM(lastRouteOriginRef.current, c) > MOVE_RECALC_M) {
+            fetchRouteSafe(c, endPoint);
           }
         }
       );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [challengeStarted, startPoint?.latitude, startPoint?.longitude, endPoint?.latitude, endPoint?.longitude]);
+  }, [
+    challengeStarted,
+    startPoint?.latitude,
+    startPoint?.longitude,
+    endPoint?.latitude,
+    endPoint?.longitude,
+  ]);
 
-  // periodic refresh
+  // periodic refresh when started
   useEffect(() => {
     if (!challengeStarted || !userLocation || !endPoint) return;
     const t = setInterval(() => fetchRouteSafe(userLocation, endPoint), RECALC_TIMER_SEC * 1000);
     return () => clearInterval(t);
-  }, [challengeStarted, userLocation?.latitude, userLocation?.longitude, endPoint?.latitude, endPoint?.longitude]);
+  }, [
+    challengeStarted,
+    userLocation?.latitude,
+    userLocation?.longitude,
+    endPoint?.latitude,
+    endPoint?.longitude,
+  ]);
 
   // auto-stop audio near end
   useEffect(() => {
     if (challengeStarted && nearEnd) audioRef.current?.fadeOut();
   }, [challengeStarted, nearEnd]);
 
+  // nudge to go to start
   useEffect(() => {
     if (!challengeStarted && !nearStart && startPoint && !startPromptShownRef.current) {
       Alert.alert("Head to the start point", "Go to the start point to start the challenge.");
@@ -287,6 +308,32 @@ export default function MapScreen() {
     }
   }, [challengeStarted]);
 
+  // 🚫 Overspeed handler: abort challenge and return home without rewards
+  useEffect(() => {
+    const off = onChallengeViolation(() => {
+      if (!challengeStarted) return;
+      setChallengeStarted(false);
+      audioRef.current?.fadeOut();
+      Alert.alert(
+        "Warning",
+        "Using transportation is not allowed.",
+        [
+          {
+            text: "I understand",
+            onPress: () => router.replace("/(tabs)"),
+          },
+        ],
+        { cancelable: false }
+      );
+    });
+    return () => {
+      try {
+        off();
+      } catch {}
+    };
+  }, [challengeStarted, router]);
+
+  // cleanup pre-start fetcher on unmount
   useEffect(
     () => () => {
       if (preStartAbortRef.current) preStartAbortRef.current.abort();
@@ -343,6 +390,7 @@ export default function MapScreen() {
     []
   );
 
+  // keep showing a guidance route to Start (before challenge starts)
   useEffect(() => {
     if (challengeStarted) {
       setPreStartRouteCoords([]);
@@ -532,7 +580,9 @@ export default function MapScreen() {
         <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }} zIndex={999}>
           <View style={{ alignItems: "center" }}>
             <Animated.View style={[styles.pulseCircle, { transform: [{ scale }], opacity }]} />
-            <View style={styles.youBubble}><Text style={styles.youText}>YOU</Text></View>
+            <View style={styles.youBubble}>
+              <Text style={styles.youText}>YOU</Text>
+            </View>
           </View>
         </Marker>
       </MapView>
@@ -546,11 +596,20 @@ export default function MapScreen() {
           progress={progress}
           instruction={summary?.nextInstruction}
           loading={routeLoading}
-          onCapture={() => {
+          onCapture={async () => {
+            if (navigatingRef.current) return;
+            navigatingRef.current = true;
             audioRef.current?.fadeOut();
+            // finalize background tracking session and persist metrics
+            let sessionTotals: { steps: number; calories: number } = { steps: 0, calories: 0 };
+            try {
+              sessionTotals = await endChallengeSessionAndPersist();
+            } catch {}
             const stats = runStatsRef.current;
             const durationSec =
-              stats.startAt !== null ? Math.max(0, Math.round((Date.now() - stats.startAt) / 1000)) : null;
+              stats.startAt !== null
+                ? Math.max(0, Math.round((Date.now() - stats.startAt) / 1000))
+                : null;
             let distanceM = stats.distance;
             if (stats.lastPoint && userLocation) {
               const tail = haversineM(stats.lastPoint, userLocation);
@@ -564,13 +623,13 @@ export default function MapScreen() {
             if (challengeTitle) baseParams.title = challengeTitle;
             if (durationSec !== null) baseParams.durationSec = String(durationSec);
             if (roundedDistance !== null) baseParams.distanceM = String(roundedDistance);
+            if (Number.isFinite(sessionTotals.steps))
+              baseParams.actualSteps = String(Math.max(0, Math.round(sessionTotals.steps)));
+            if (Number.isFinite(sessionTotals.calories))
+              baseParams.actualCalories = String(Math.max(0, Math.round(sessionTotals.calories)));
 
-            if (challengeId) {
-              baseParams.challengeId = challengeId;
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
-            } else {
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
-            }
+            if (challengeId) baseParams.challengeId = challengeId;
+            router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
           }}
         />
       )}
@@ -581,6 +640,8 @@ export default function MapScreen() {
           style={styles.startBtn}
           onPress={async () => {
             setChallengeStarted(true);
+            // start background tracking session
+            void beginChallengeSession();
             runStatsRef.current = {
               startAt: Date.now(),
               distance: 0,
@@ -590,7 +651,9 @@ export default function MapScreen() {
             if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
           }}
         >
-          <Text style={styles.btnText}>Start {challengeTitle ? `– ${challengeTitle}` : "Challenge"}</Text>
+          <Text style={styles.btnText}>
+            Start {challengeTitle ? `– ${challengeTitle}` : "Challenge"}
+          </Text>
         </TouchableOpacity>
       )}
 

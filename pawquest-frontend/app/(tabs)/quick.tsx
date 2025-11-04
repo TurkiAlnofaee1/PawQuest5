@@ -124,7 +124,7 @@ export default function QuickChallengeDetails() {
 
         <View style={styles.card}>
           <Text style={styles.title}>XP Rules</Text>
-          <Text style={styles.item}>- Every 1 km = 1000 XP.</Text>
+          <Text style={styles.item}>- You earn 1 XP for every 5 steps.</Text>
           <Text style={styles.item}>- Partial kms don’t count (1.5 km → 1 km).</Text>
           <Text style={styles.item}>- Only your equipped pet evolves.</Text>
         </View>

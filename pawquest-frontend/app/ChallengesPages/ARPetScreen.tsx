@@ -28,6 +28,8 @@ type RouteParams = {
   title?: string | string[];
   durationSec?: string | string[];
   distanceM?: string | string[];
+  actualSteps?: string | string[];
+  actualCalories?: string | string[];
 };
 
 type ChallengeVariant = {
@@ -92,6 +94,20 @@ export default function ARPetScreen() {
     const value = Number(raw);
     return Number.isFinite(value) && value >= 0 ? value : null;
   }, [params.distanceM]);
+
+  const actualSteps = useMemo(() => {
+    const raw = toSingle(params.actualSteps);
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }, [params.actualSteps]);
+
+  const actualCalories = useMemo(() => {
+    const raw = toSingle(params.actualCalories);
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }, [params.actualCalories]);
 
   // --- Capture animation (scale+fade out)
   const capScale = useRef(new Animated.Value(1)).current;
@@ -396,6 +412,8 @@ export default function ARPetScreen() {
         rewardParams.calories = String(challengeMeta.variant.calories);
       if (typeof challengeMeta.variant?.steps === "number")
         rewardParams.steps = String(challengeMeta.variant.steps);
+      if (actualCalories !== null) rewardParams.actualCalories = String(actualCalories);
+      if (actualSteps !== null) rewardParams.actualSteps = String(actualSteps);
       if (typeof challengeMeta.variant?.estimatedTimeMin === "number")
         rewardParams.estimatedTimeMin = String(challengeMeta.variant.estimatedTimeMin);
       if (typeof challengeMeta.variant?.distanceMeters === "number")

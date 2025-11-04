@@ -5,6 +5,7 @@ import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 
 import { auth } from '@/src/lib/firebase';
+import { beginChallengeSession, endChallengeSessionAndPersist, onChallengeViolation, getCurrentSessionSteps } from '@/src/lib/backgroundTracking';
 import { awardPlayerProgress } from '@/src/lib/playerProgress';
 
 const haversineM = (a: LatLng, b: LatLng) => {
@@ -42,8 +43,8 @@ export default function QuickRun() {
     () => (startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0),
     [startedAt, tick],
   );
-  // 1 meter = 1 XP
-  const expectedXp = useMemo(() => Math.floor(distanceM), [distanceM]);
+  // Display XP: 1 XP per 5 steps from session
+  const displayedXp = useMemo(() => Math.max(0, Math.floor(getCurrentSessionSteps() / 5)), [tick]);
 
   const startWatch = useCallback(async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -62,6 +63,8 @@ export default function QuickRun() {
     setPath([initial]);
     setStartedAt(Date.now());
     setRunning(true);
+    // start calories/steps session
+    void beginChallengeSession();
 
     watchRef.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 3 },
@@ -89,6 +92,23 @@ export default function QuickRun() {
     };
   }, [startWatch]);
 
+  // Overspeed handler: abort without rewards
+  useEffect(() => {
+    const off = onChallengeViolation(() => {
+      if (!running) return;
+      try { watchRef.current?.remove(); } catch {}
+      watchRef.current = null;
+      setRunning(false);
+      Alert.alert(
+        'Warning',
+        'Using transportation is not allowed.',
+        [ { text: 'I understand', onPress: () => router.replace('/(tabs)') } ],
+        { cancelable: false },
+      );
+    });
+    return () => { try { off(); } catch {} };
+  }, [running, router]);
+
   // Tick every second while running so timer updates smoothly even if user stands still
   useEffect(() => {
     if (!running) return;
@@ -102,8 +122,12 @@ export default function QuickRun() {
     watchRef.current = null;
     setRunning(false);
 
-    // Award XP at 1 XP per meter
-    const xp = Math.floor(distanceM);
+    // End background session and persist steps/calories to today; use steps for XP
+    let sessionTotals = { steps: 0, calories: 0 };
+    try { sessionTotals = await endChallengeSessionAndPersist(); } catch {}
+
+    // 1 XP for each 5 steps
+    const xp = Math.max(0, Math.floor((sessionTotals.steps ?? 0) / 5));
     const uid = auth.currentUser?.uid;
     if (uid && xp > 0) {
       try {
@@ -146,7 +170,7 @@ export default function QuickRun() {
         </View>
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>XP</Text>
-          <Text style={styles.statValue}>{expectedXp}</Text>
+          <Text style={styles.statValue}>{displayedXp}</Text>
         </View>
       </View>
 
