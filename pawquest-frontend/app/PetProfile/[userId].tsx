@@ -280,14 +280,6 @@ export default function PetProfileScreen() {
     }
   };
 
-  const handleChallenge = () => {
-    if (!user?.id || isOwnProfile) return;
-    router.push({
-      pathname: '/(tabs)/challenges',
-      params: { opponentId: user.id },
-    });
-  };
-
   const handleModalDismiss = () => setModalVisible(false);
 
   const onGoBack = () => {
@@ -382,12 +374,6 @@ export default function PetProfileScreen() {
                     <Text style={[styles.actionText, (hasSentGreeting || sendingGreeting) && styles.disabledText]}>
                       {hasSentGreeting ? 'Greeting Sent' : sendingGreeting ? 'Sending...' : 'Send Greeting'}
                     </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.actionButton, styles.challengeButton]}
-                    onPress={handleChallenge}
-                  >
-                    <Text style={[styles.actionText, styles.challengeText]}>Challenge</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -531,9 +517,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   greetButton: { backgroundColor: '#FFFFFF' },
-  challengeButton: { backgroundColor: '#10B981' },
   actionText: { fontWeight: '800', color: '#064E3B', fontSize: 16 },
-  challengeText: { color: '#FFFFFF' },
   disabledButton: { opacity: 0.6 },
   disabledText: { color: '#475569' },
   modalOverlay: {
