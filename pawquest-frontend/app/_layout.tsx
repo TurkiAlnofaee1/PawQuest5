@@ -77,6 +77,7 @@ export default function RootLayout() {
             />
             <Stack.Screen name="experience-new" options={{ headerShown: false }} />
             <Stack.Screen name="PetProfile/[userId]" options={{ headerShown: false }} />
+            <Stack.Screen name="ChallengesPages/QuickRun" options={{ headerShown: false }} />
             <Stack.Screen name="+not-found" />
 
             {/* Auth routes (kept in the root stack to ensure they render when redirected) */}

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Image, ImageBackground, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, ImageBackground, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, getDocs, onSnapshot, query, limit } from 'firebase/firestore';
@@ -139,7 +139,16 @@ export default function QuickChallengeDetails() {
         </View>
 
         <Pressable
-          onPress={() => router.push('/ChallengesPages/QuickRun')}
+          onPress={() =>
+            Alert.alert(
+              'Ready to start?',
+              'Are you ready to start this quick challenge?',
+              [
+                { text: 'Not yet', style: 'cancel' },
+                { text: 'Yes, start', onPress: () => router.push('/ChallengesPages/QuickRun') },
+              ],
+            )
+          }
           style={({ pressed }) => [styles.startBtn, pressed && { transform: [{ scale: 0.98 }] }]}
         >
           <Text style={styles.startText}>Start</Text>

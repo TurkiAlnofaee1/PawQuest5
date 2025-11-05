@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import {
   View,
   Text,
@@ -10,11 +10,10 @@ import {
   Dimensions,
   ScrollView,
   ActivityIndicator,
+  Pressable,
 } from "react-native";
 import Svg, { Polyline, Circle, Line } from "react-native-svg";
-
-import { Colors } from "@/constants/Colors";
-import { useColorScheme } from "@/hooks/useColorScheme";
+import { Ionicons } from "@expo/vector-icons";
 
 import { auth } from "@/src/lib/firebase";
 import {
@@ -167,7 +166,7 @@ function StatCard({
 
 // ───────────────── screen ─────────────────
 export default function ProgressScreen() {
-  const scheme = (useColorScheme() ?? "light") as "light" | "dark";
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [calories7, setCalories7] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
@@ -231,10 +230,21 @@ export default function ProgressScreen() {
     return Math.round(n).toLocaleString();
   }, [steps7]);
 
+  const handleGoBack = () => {
+    if (router.canGoBack()) router.back();
+  };
+
   return (
     <ImageBackground source={bgImage} style={styles.bg} imageStyle={styles.bgImg}>
       <Stack.Screen options={{ headerShown: false, title: "My Progress" }} />
       <SafeAreaView style={styles.safe}>
+        <View style={styles.headerRow}>
+          <Pressable onPress={handleGoBack} style={styles.backPill}>
+            <Ionicons name="chevron-back" size={22} color="#0B3D1F"  />
+          </Pressable>
+          <Text style={styles.title}>My Progress</Text>
+          <View style={styles.headerSpacer} />
+        </View>
         <ScrollView
           contentContainerStyle={[
             styles.container,
@@ -242,10 +252,6 @@ export default function ProgressScreen() {
           ]}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={[styles.title, { color: Colors[scheme].text }]}>
-            My Progress
-          </Text>
-
           {loading ? (
             <ActivityIndicator size="large" style={{ marginTop: 16 }} />
           ) : err ? (
@@ -260,6 +266,7 @@ export default function ProgressScreen() {
                 unitRight="kcal"
                 data={calories7}
                 yMax={Math.max(700, Math.max(...calories7) + 100)}
+                
               />
 
               <Text style={[styles.sectionLabel, { marginTop: 12 }]}>
@@ -290,12 +297,34 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   container: { alignItems: "center", paddingHorizontal: 16 },
   title: {
+    flex: 1,
     fontSize: 34,
     fontWeight: "800",
-    marginTop: 8,
-    marginBottom: 12,
     textAlign: "center",
+    color: "#0B0B0B",
   },
+  headerRow: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 28,
+  },
+  backPill: {
+    width: 44,
+    height: 44,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+    marginLeft: 20,
+  },
+  headerSpacer: { width: 44 },
   sectionLabel: {
     alignSelf: "flex-start",
     fontSize: 20,
