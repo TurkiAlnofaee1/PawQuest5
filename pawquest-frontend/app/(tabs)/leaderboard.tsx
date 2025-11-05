@@ -114,7 +114,9 @@ export default function LeaderboardScreen() {
             renderItem={(props) => renderRow({ ...props, index: props.index })}
             ListHeaderComponent={<Podium users={top3} onOpenProfile={handleOpenProfile} />}
             contentContainerStyle={styles.list}
-            ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.06)', marginHorizontal: 12 }} />}
+            ItemSeparatorComponent={() => (
+              <View style={{ height: 2, backgroundColor: 'rgba(0,0,0,0.28)', marginHorizontal: 12 }} />
+            )}
             ListFooterComponent={<View style={{ height: 14 }} />}
             style={styles.panel}
           />
@@ -197,8 +199,7 @@ function Podium({ users, onOpenProfile }: { users: Player[]; onOpenProfile: (id?
         </View>
       </View>
 
-      {/* Divider panel header to match UI */}
-      <View style={styles.panelHeader} />
+      {/* Removed divider bar under podium per request */}
     </View>
   );
 }
@@ -277,12 +278,12 @@ const styles = StyleSheet.create({
   panelHeader: {
     marginTop: 16,
     height: 14,
-    backgroundColor: '#BEE3BF',
+    backgroundColor: 'rgba(12, 46, 22, 0.22)',
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
   },
 
-  panel: { marginTop: 6, marginHorizontal: 16, backgroundColor: '#BEE3BF', borderRadius: 18, overflow: 'hidden' },
+  panel: { marginTop: 6, marginHorizontal: 16, backgroundColor: 'rgba(12, 46, 22, 0.22)', borderRadius: 18, overflow: 'hidden' },
   row: { paddingVertical: 14, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   avatarSm: { width: 44, height: 44, borderRadius: 22 },

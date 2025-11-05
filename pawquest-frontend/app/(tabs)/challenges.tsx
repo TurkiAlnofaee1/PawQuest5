@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
 
   quickBtn: {
     marginTop: 10,
-    marginBottom: 60,
+    marginBottom: 73,
     marginHorizontal: 20,
     backgroundColor: "#BEE3BF",
     borderRadius: 18,
