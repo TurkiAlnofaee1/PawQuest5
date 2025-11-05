@@ -459,7 +459,6 @@ export default function ChallengeDetails() {
   const statDistance = selectedStory?.distanceMeters ?? variant?.distanceMeters;
   const statCalories = selectedStory?.calories ?? variant?.calories;
   const statTime = selectedStory?.estimatedTimeMin ?? variant?.estimatedTimeMin;
-  const statHiit = selectedStory?.hiitType ?? variant?.hiitType;
 
   const handleStart = () => {
     if (!normalizedId) {
@@ -640,35 +639,41 @@ export default function ChallengeDetails() {
               },
             ]}
           >
-            <View style={styles.statsRow}>
-              <Text style={styles.statItem}>👣 {mToKm(statDistance)}</Text>
-              <Text style={styles.statItem}>🔥 {statCalories ?? "—"} cal</Text>
-              <Text style={styles.statItem}>
-                <Ionicons name="time-outline" size={14} /> {statTime ?? "—"} min
+             <View style={styles.statsRow}>
+              <Text style={[styles.statItem, styles.statsLeft]}>👣 {mToKm(statDistance)}</Text>
+              <Text style={[styles.statItem, styles.statsCenter]}>🔥 {statCalories ?? "--"} cal</Text>
+              <Text style={[styles.statItem, styles.statsRight]}>
+                <Ionicons name="time-outline" size={16} /> {statTime ?? "--"} min
               </Text>
-              <Text style={styles.statItem}>HIIT: {statHiit ?? "—"}</Text>
             </View>
 
             <View style={[styles.divider, { backgroundColor: pal.divider }]} />
 
-          <View style={styles.metaRow}>
-            <Text style={styles.smallDim}>
-              {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
-            </Text>
-            <Text style={styles.smallDim}>
-              {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
-            </Text>
-            {ratingStats && ratingStats.ratingCount > 0 ? (
-              <Text style={styles.smallDim}>
-                ★ {ratingStats.ratingAvg.toFixed(1)} ({ratingStats.ratingCount})
+            <View style={styles.metaRow}>
+              <Text style={[styles.smallDim, styles.metaCell, styles.metaLeft]}>
+                {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
               </Text>
-            ) : null}
-            {userRating ? (
-              <Text style={[styles.smallDim, styles.smallDimOwn]}>
-                your rating: {userRating}★
-              </Text>
-            ) : null}
-          </View>
+              <View style={[styles.metaCell, styles.metaCenter]}>
+                {ratingStats && ratingStats.ratingCount > 0 ? (
+                  <View style={styles.ratingInline}>
+                    <Ionicons name="star" size={15} color="#F59E0B" />
+                    <Text style={styles.smallDim}>
+                      {ratingStats.ratingAvg.toFixed(1)} ({ratingStats.ratingCount})
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <View style={[styles.metaCell, styles.metaRight]}>
+                {userRating ? (
+                  <View style={styles.ratingInline}>
+                    <Text style={[styles.smallDim, styles.smallDimOwn]}>
+                      your rating: {userRating}
+                    </Text>
+                    <Ionicons name="star" size={15} color="#F59E0B" />
+                  </View>
+                ) : null}
+              </View>
+            </View>
         </Animated.View>
 
           {/* (Connectivity row removed by request) */}
@@ -815,10 +820,18 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
   },
-  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
-  statItem: { fontSize: 14, color: "#000000ff" },
+  statsRow: { flexDirection: "row", alignItems: "center", gap: 16, justifyContent: "space-between" },
+  statItem: { fontSize: 14, color: "#000000ff", flex: 1 },
+  statsLeft: { textAlign: "left" },
+  statsCenter: { textAlign: "center" },
+  statsRight: { textAlign: "right" },
   divider: { height: 1, marginVertical: 12, opacity: 0.6 },
-  metaRow: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  metaCell: { flex: 1 },
+  metaLeft: { textAlign: "left" },
+  metaCenter: { alignItems: "center", justifyContent: "center" },
+  metaRight: { alignItems: "flex-end" },
+  ratingInline: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
   smallDim: { fontSize: 12, color: "#252525ff" },
   smallDimOwn: { fontSize: 12, color: "#252525ff", opacity: 0.8, fontStyle: "italic" },
 

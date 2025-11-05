@@ -150,7 +150,7 @@ export default function QuickRun() {
 
       <View style={styles.mapWrap}>
         <MapView
-          ref={(r) => (mapRef.current = r)}
+          ref={mapRef}
           style={styles.map}
           region={region ?? undefined}
           showsUserLocation

@@ -314,20 +314,23 @@ export default function CListCore({ category, headerTitle, onSelect, onCountChan
             </Text>
           )}
 
-          <Text style={styles.meta}>
-            <Ionicons name="walk-outline" size={14} /> {metersToKm(item.distanceMeters)} ·{" "}
-            <Ionicons name="time-outline" size={14} /> {minutesText(item.estimatedTimeMin)}
-          </Text>
+          <View style={styles.statsRow}>
+            <Text style={styles.meta}>
+              <Ionicons name="walk-outline" size={14} /> {metersToKm(item.distanceMeters)}
+            </Text>
+            <Text style={styles.meta}>
+              <Ionicons name="time-outline" size={14} /> {minutesText(item.estimatedTimeMin)}
+            </Text>
+            {item.ratingCount > 0 ? (
+              <Text style={styles.meta}>
+                <Ionicons name="star" size={14} color="#F59E0B" /> {item.ratingAvg.toFixed(1)} ({item.ratingCount})
+              </Text>
+            ) : null}
+          </View>
 
           <Text style={styles.meta}>
             <Ionicons name="paw-outline" size={14} /> {item.rewardPet ?? "-"}
           </Text>
-          {item.ratingCount > 0 ? (
-            <Text style={styles.meta}>
-              <Ionicons name="star" size={14} color="#F59E0B" />{" "}
-              {item.ratingAvg.toFixed(1)} ({item.ratingCount})
-            </Text>
-          ) : null}
         </View>
       </View>
 
@@ -399,6 +402,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
+    position: "relative",
   },
   left: { flexDirection: "row", alignItems: "center", gap: 14, flex: 1 },
   imageWrap: {
@@ -414,6 +418,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: "900", color: "#0b1d22" },
   metaStrong: { fontSize: 13.5, color: "#0f172a", marginTop: 2, fontWeight: "700" },
   meta: { fontSize: 13.5, color: "#374151", marginTop: 2 },
+  statsRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 2 },
 
   lockBadge: {
     flexDirection: "row",
@@ -423,6 +428,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 9999,
     backgroundColor: "#F3F4F6",
+    position: "absolute",
+    top: 12,
+    right: 12,
   },
   lockText: { fontSize: 12, fontWeight: "700", color: "#1F2937" },
 });

@@ -12,6 +12,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, onSnapshot, serverTimestamp, setDoc, Unsubscribe } from 'firebase/firestore';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
@@ -38,6 +39,7 @@ type PetDoc = {
   rarity?: string | null;
   xp?: number | null;
   evoLevel?: number | null;
+  stageCount?: number | null;
 };
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
@@ -145,6 +147,12 @@ export default function PetProfileScreen() {
         const evo = Math.floor(xp / PET_XP_PER_LEVEL);
         const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : 0;
         const score = stageIdx * 1000000000 + xp; // prioritize stage, then xp
+        const stageCount =
+          imgs.length > 0
+            ? imgs.length
+            : typeof data?.stageCount === 'number' && Number.isFinite(data.stageCount)
+            ? Math.max(0, Math.floor(data.stageCount))
+            : null;
         if (!best || score > (best._score ?? -1)) {
           best = {
             _score: score,
@@ -154,11 +162,21 @@ export default function PetProfileScreen() {
             xp,
             evoLevel: evo,
             rarity: data?.rarity ?? null,
+            stageCount,
           };
         }
       });
       if (best) {
-        setPet({ id: best.id, name: best.name, imageUrl: best.imageUrl, level: null, rarity: best.rarity, xp: best.xp, evoLevel: best.evoLevel });
+        setPet({
+          id: best.id,
+          name: best.name,
+          imageUrl: best.imageUrl,
+          level: null,
+          rarity: best.rarity,
+          xp: best.xp,
+          evoLevel: best.evoLevel,
+          stageCount: best.stageCount ?? null,
+        });
       } else {
         setPet(null);
       }
@@ -217,15 +235,27 @@ export default function PetProfileScreen() {
     return Math.max(derived, runs);
   }, [user?.completedChallenges, challengeRunsCount]);
 
-  const petLevel = useMemo(() => {
-    if (!pet) return 0;
-    if (typeof pet.level === 'number' && Number.isFinite(pet.level)) return Math.max(0, pet.level);
-    if (typeof pet.evoLevel === 'number' && Number.isFinite(pet.evoLevel)) return Math.max(0, pet.evoLevel);
-    if (typeof pet.xp === 'number' && Number.isFinite(pet.xp)) {
-      const xp = Math.max(0, pet.xp);
-      return Math.floor(xp / PET_XP_PER_LEVEL);
+  const petLevelDisplay = useMemo(() => {
+    if (!pet) return '0';
+    let level: number | null = null;
+    if (typeof pet.level === 'number' && Number.isFinite(pet.level)) {
+      level = Math.max(1, Math.floor(pet.level));
+    } else {
+      let evo = 0;
+      if (typeof pet.evoLevel === 'number' && Number.isFinite(pet.evoLevel)) {
+        evo = Math.max(0, Math.floor(pet.evoLevel));
+      } else if (typeof pet.xp === 'number' && Number.isFinite(pet.xp)) {
+        const xp = Math.max(0, pet.xp);
+        evo = Math.floor(xp / PET_XP_PER_LEVEL);
+      }
+      level = evo + 1;
     }
-    return 0;
+    const maxStage =
+      typeof pet.stageCount === 'number' && Number.isFinite(pet.stageCount)
+        ? Math.max(1, Math.floor(pet.stageCount))
+        : null;
+    if (maxStage && level >= maxStage) return 'Max!';
+    return String(level ?? 0);
   }, [pet]);
   const rarityBorderColor = getRarityColor(pet?.rarity);
 
@@ -292,7 +322,7 @@ export default function PetProfileScreen() {
         <ScrollView contentContainerStyle={styles.scroll}>
           <View style={styles.headerRow}>
             <Pressable onPress={onGoBack} style={styles.backPill}>
-              <Text style={styles.backText}>Back</Text>
+              <Ionicons name="chevron-back" size={22} color="#0B3D1F" />
             </Pressable>
           </View>
 
@@ -356,7 +386,7 @@ export default function PetProfileScreen() {
                 <View style={styles.statDivider} />
                 <View style={styles.statItem}>
                   <Text style={styles.statLabel}>Evolution Level</Text>
-                  <Text style={styles.statValue}>{petLevel}</Text>
+                  <Text style={styles.statValue}>{petLevelDisplay}</Text>
                 </View>
               </View>
 
@@ -416,18 +446,18 @@ const styles = StyleSheet.create({
   scroll: { padding: 20, paddingBottom: 40 },
   headerRow: { flexDirection: 'row', justifyContent: 'flex-start' },
   backPill: {
-    backgroundColor: '#BEE3BF',
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-    alignSelf: 'flex-start',
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
-  backText: { fontWeight: '800', color: '#0B3D1F' },
   loaderBlock: { flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 80 },
   errorBlock: {
     marginTop: 60,
