@@ -65,16 +65,7 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="ChallengesPages/ChallengeReward" options={{ headerShown: false }} />
             <Stack.Screen name="ChallengesPages/ARPetScreen" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="account"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: '#0C2E16' },
-                headerTintColor: '#fff',
-                headerTitleStyle: { fontWeight: '800' },
-                headerBackVisible: false,
-              }}
-            />
+            <Stack.Screen name="account" options={{ headerShown: false }} />
             <Stack.Screen name="experience-new" options={{ headerShown: false }} />
             <Stack.Screen name="PetProfile/[userId]" options={{ headerShown: false }} />
             <Stack.Screen name="ChallengesPages/QuickRun" options={{ headerShown: false }} />

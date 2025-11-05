@@ -183,8 +183,8 @@ export default function QuickRun() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { padding: 12, backgroundColor: '#000' },
-  title: { color: '#fff', fontWeight: '900', fontSize: 18 },
+  header: { padding: 12, backgroundColor: '#000', alignItems: 'center' },
+  title: { color: '#fff', fontWeight: '900', fontSize: 18, textAlign: 'center' },
 
   mapWrap: { flex: 1 },
   map: { flex: 1 },

@@ -1,8 +1,10 @@
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   ImageBackground,
+  Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,9 +12,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
+import { AntDesign, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { useNavigation, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import type { ComponentProps } from 'react';
 
 import { signOut, updatePlayerProfile } from '@/src/lib/auth';
@@ -34,7 +36,6 @@ type MaterialCommunityIconName = ComponentProps<typeof MaterialCommunityIcons>['
 
 export default function AccountScreen() {
   const router = useRouter();
-  const navigation = useNavigation();
   const { profile, loading, error } = usePlayerProfile();
 
   const [editing, setEditing] = useState(false);
@@ -49,30 +50,13 @@ export default function AccountScreen() {
     avatarPreview: '',
   });
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      title: 'My Account',
-      headerStyle: { backgroundColor: '#0C2E16' },
-      headerTintColor: '#fff',
-      headerTitleStyle: { fontWeight: '800' },
-      headerShadowVisible: false,
-      headerLeft: () => (
-        <TouchableOpacity
-          style={styles.headerBack}
-          onPress={() => {
-            if ('canGoBack' in navigation && typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
-              navigation.goBack();
-            } else {
-              router.replace('/settings' as any);
-            }
-          }}
-        >
-          <AntDesign name="arrow-left" size={18} color="#ffffff" />
-          <Text style={styles.headerBackText}>Settings</Text>
-        </TouchableOpacity>
-      ),
-    });
-  }, [navigation, router]);
+  const handleGoBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/settings' as any);
+    }
+  };
 
   useEffect(() => {
     if (!profile || editing) return;
@@ -208,8 +192,16 @@ export default function AccountScreen() {
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <View style={styles.overlay} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.hero}>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.headerRow}>
+          <Pressable onPress={handleGoBack} style={styles.backPill}>
+            <Ionicons name="chevron-back" size={22} color="#0B3D1F" />
+          </Pressable>
+          <Text style={styles.headerTitle}>My account</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.hero}>
           <View style={styles.avatarWrap}>
             <Image source={avatarSource} style={styles.avatar} />
             {editing && (
@@ -350,7 +342,8 @@ export default function AccountScreen() {
             <Text style={styles.secondaryText}>Sign out</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+        </ScrollView>
+      </SafeAreaView>
     </ImageBackground>
   );
 }
@@ -377,8 +370,39 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(12, 46, 22, 0.25)',
   },
+  safe: {
+    flex: 1,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 24,
+  },
+  backPill: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#ffffffff',
+  },
+  headerSpacer: { width: 44 },
   content: {
-    paddingTop: 80,
+    paddingTop: 24,
     paddingBottom: 40,
     paddingHorizontal: 20,
   },
@@ -596,18 +620,6 @@ const styles = StyleSheet.create({
   },
   column: {
     flex: 1,
-  },
-  headerBack: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  headerBackText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
   },
 });
 
