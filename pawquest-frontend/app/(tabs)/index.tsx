@@ -43,19 +43,88 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 16,
   },
+  topAction: {
+    marginHorizontal: 12, // pull both icons equally toward center
+  },
+  topIconBox: {
+    backgroundColor: 'rgba(12,46,22,0.28)',
+    borderRadius: 14,
+    padding: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
   topBarTitle: {
     flex: 1,
     textAlign: 'center',
-    fontWeight: 'bold',
-    fontSize: 22,
-    letterSpacing: 0.5,
+    fontWeight: '900',
+    fontSize: 28,
+    letterSpacing: 0.6,
   },
   body: {
     flex: 1,
   },
+  // Big pet card
+  petCard: {
+    width: '92%',
+    maxWidth: 560,
+    backgroundColor: 'rgba(12,46,22,0.22)',
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginTop: 44,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  petCardHeader: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  petCardImage: {
+    width: 220,
+    height: 220,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+  },
+  petCardMeta: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  petCardName: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  petCardLevel: {
+    marginTop: 2,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    opacity: 1,
+  },
+  petCardProgressBg: {
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(12, 46, 22, 0.18)',
+    width: '100%',
+    overflow: 'hidden',
+    marginTop: 10,
+  },
+  petCardProgressFill: {
+    height: '100%',
+    backgroundColor: '#0C2E16',
+    borderRadius: 999,
+  },
+  // (Player header removed per request)
   statsCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'center',
+    width: '92%',
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 60,
@@ -136,13 +205,19 @@ const styles = StyleSheet.create({
   progressLabelsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 6,
+    marginTop: 8,
   },
   progressLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0C2E16',
-    opacity: 0.9,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    opacity: 0.95,
+  },
+  maxLevelText: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    textAlign: 'center',
   },
   petImage: {
     width: 220,
@@ -248,10 +323,11 @@ type StatsCardProps = { colorScheme: string };
 const StatsCard: React.FC<StatsCardProps> = ({ colorScheme }) => {
   const router = useRouter();
   const scheme = (colorScheme === 'dark' ? 'dark' : 'light') as 'light' | 'dark';
-  const cardColor = scheme === 'dark' ? '#222' : '#fff';
-  const textColor = Colors[scheme].text;
-  const mutedColor = scheme === 'dark' ? '#aaa' : '#888';
-  const dividerColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.10)';
+  // Stats card should match navbar: solid dark green background with white text
+  const cardColor = '#0C2E16';
+  const textColor = '#FFFFFF';
+  const mutedColor = 'rgba(255,255,255,0.85)';
+  const dividerColor = 'rgba(255,255,255,0.22)';
 
   const [todayCalories, setTodayCalories] = useState<number>(0);
   const [todaySteps, setTodaySteps] = useState<number>(0);
@@ -391,6 +467,8 @@ const Home: React.FC = () => {
       const equippedPetId = data?.equippedPetId as string | undefined;
       const lvl = typeof data?.level === 'number' ? data.level : 0;
       setPlayerLevel(Math.max(0, lvl));
+      // Prefer displayName/username from profile, fallback to auth or email prefix
+      // Player name display removed per request
       if (!equippedPetId) {
         setPetName(null);
         setPetImageUrl(null);
@@ -625,15 +703,18 @@ const Home: React.FC = () => {
             hitSlop={16}
             accessibilityLabel="Open settings"
             onPress={() => router.push('/(tabs)/settings')}
+            style={styles.topAction}
           >
-            <MaterialCommunityIcons
-              name="cog-outline"
-              size={28}
-              color={iconColor}
-            />
+            <View style={styles.topIconBox}>
+              <MaterialCommunityIcons
+                name="cog-outline"
+                size={28}
+                color={iconColor}
+              />
+            </View>
           </TouchableOpacity>
 
-          <Text style={[styles.topBarTitle, { color: Colors[scheme].text }]}>Home</Text>
+          <Text style={[styles.topBarTitle, { color: '#ffffffff' }]}>Home</Text>
 
           {/* Notifications */}
           <TouchableOpacity
@@ -641,8 +722,9 @@ const Home: React.FC = () => {
             hitSlop={16}
             accessibilityLabel="Open notifications"
             onPress={handleOpenNotifications}
+            style={styles.topAction}
           >
-            <View style={{ padding: 2 }}>
+            <View style={styles.topIconBox}>
               <MaterialCommunityIcons name="bell-outline" size={28} color={iconColor} />
               {unreadCount > 0 ? (
                 <View style={styles.notificationBadge}>
@@ -655,41 +737,56 @@ const Home: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Stats card */}
+        {/* Stats card (colors tuned to app palette) */}
         <StatsCard colorScheme={colorScheme} />
 
-        {/* Equipped pet section */}
+        {/* Equipped pet section — big middle card */}
         <View style={[styles.body, { alignItems: 'center' }]}>
-          {petImageUrl ? (
-            <Image source={{ uri: petImageUrl }} style={styles.petImage} resizeMode="contain" />
-          ) : null}
-          {petName ? (
+          {petName !== null ? (
             <TouchableOpacity
               accessibilityLabel="Open pet inventory"
               onPress={() => router.push('/(tabs)/petinventory')}
-              activeOpacity={0.85}
-              style={styles.petNameBox}
+              activeOpacity={0.9}
+              style={styles.petCard}
             >
-              <Text style={styles.petNameText}>{petName} • Lvl {playerLevel}</Text>
-            </TouchableOpacity>
-          ) : null}
-          {petName !== null ? (
-            <View style={styles.evolutionBox}>
+              <View style={styles.petCardHeader}>
+                {petImageUrl ? (
+                  <Image source={{ uri: petImageUrl }} style={styles.petCardImage} resizeMode="contain" />
+                ) : null}
+                <View style={styles.petCardMeta}>
+                  <Text style={styles.petCardName} numberOfLines={1}>
+                    {petName}
+                  </Text>
+                  <Text style={styles.petCardLevel}>
+                    Lvl {Math.min(2, Math.max(0, petEvoLevel ?? 0)) + 1}
+                  </Text>
+                </View>
+              </View>
               {(() => {
                 const evo = Math.max(0, petEvoLevel ?? 0);
                 const stageIdx = Math.min(2, evo);
                 const displayLvl = stageIdx + 1;
-                const atMaxStage = stageIdx >= 2;
+                // Consider "King" (3rd image/stage) as max. If naming changed, fallback to stage index check.
+                // Consider max if name contains "KING" (any case) or stage index >= 2 (Lvl 3)
+                const isKingByName = typeof petName === 'string' && /\bking\b/i.test(petName);
+                const atMaxStage = isKingByName || stageIdx >= 2;
                 const totalXp = Math.max(0, petXp ?? 0);
                 const xpInLevel = totalXp - evo * PET_XP_PER_LEVEL;
                 const pct = Math.max(0, Math.min(1, xpInLevel / PET_XP_PER_LEVEL));
                 return (
-                  <>
-                    <Text style={styles.evolutionTitle}>{atMaxStage ? 'Lvl 3 MAX!' : `Lvl ${displayLvl}`}</Text>
-                    {!atMaxStage && (
+                  <View style={{ marginTop: 12, width: '100%' }}>
+                    {atMaxStage ? (
+                      <Text style={styles.maxLevelText}>MAX!</Text>
+                    ) : (
                       <>
-                        <View style={styles.progressBarBg}>
-                          <View style={[styles.progressBarFill, { width: `${pct * 100}%` }]} />
+                        <View style={styles.petCardProgressBg}>
+                          <View
+                            style={[
+                              styles.petCardProgressFill,
+                              { width: `${Math.max(6, pct * 100)}%` },
+                              { opacity: pct > 0 ? 1 : 0.4 },
+                            ]}
+                          />
                         </View>
                         <View style={styles.progressLabelsRow}>
                           <Text style={styles.progressLabel}>{`Lvl ${displayLvl}`}</Text>
@@ -697,10 +794,10 @@ const Home: React.FC = () => {
                         </View>
                       </>
                     )}
-                  </>
+                  </View>
                 );
               })()}
-            </View>
+            </TouchableOpacity>
           ) : null}
         </View>
       </SafeAreaView>

@@ -2,49 +2,50 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { Platform, View } from 'react-native';
 import { AntDesign, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { IconSymbol } from '@/components/ui/IconSymbol';
 
-// 🎨 palette tuned to your screenshot
+// Project palette tuned to PawQuest
 const PALETTE = {
-  barBgStart: '#F8F8F8', // lighter center glow
-  barBgEnd: '#66b133ff', // darker edge to blend with background
-  
-  shadow: 'rgba(59, 235, 5, 0.35)', // green-tinted shadow
-  iconActive: '#4CAF50', // golden-brown icons (active)
-  iconInactive: '#555555', // softened version for inactive
-  indicator: '#4CAF50', // golden indicator under active tab
+  barBg: '#0C2E16', // primary dark green used across the app
+  barShadow: 'rgba(202, 199, 199, 0.35)',
+  iconInactive: 'rgba(255,255,255,0.75)',
+  iconActive: '#FFFFFF',
+  activeBubble: '#3e6d3fff', // green accent for focused tab
 };
-
-// little pill under the focused icon
-const Indicator = ({ focused }: { focused: boolean }) => (
-  <View
-    style={{
-      height: 4,
-      width: 28,
-      borderRadius: 999,
-      marginTop: 6,
-      backgroundColor: PALETTE.indicator,
-      opacity: focused ? 1 : 0,
-    }}
-  />
-);
 
 const ICON_SIZE = 35;
 const HEAVY_ICON_SIZE = 34;
 const LIGHT_ICON_SIZE = 28;
 
-// helper to render icon + indicator stacked
-const withIndicator =
+// Raised rounded-square behind the focused icon
+const Bubble = ({ focused }: { focused: boolean }) => (
+  <View
+    style={{
+      position: 'absolute',
+      top: focused ? -2 : -8,
+      width: focused ? 46 : 40,
+      height: focused ? 46 : 40,
+      borderRadius: 14,
+      backgroundColor: focused ? PALETTE.activeBubble : 'transparent',
+      shadowColor: PALETTE.barShadow,
+      shadowOpacity: focused ? 0.35 : 0,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: focused ? 6 : 0,
+    }}
+  />
+);
+
+// helper to render icon with the active bubble
+const withBubble =
   (renderIcon: (color: string) => React.ReactNode) =>
-  ({ color, focused }: { color: string; focused: boolean }) =>
-    (
-      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-        {renderIcon(color)}
-        <Indicator focused={focused} />
-      </View>
-    );
+  ({ color, focused }: { color: string; focused: boolean }) => (
+    <View style={{ alignItems: 'center', justifyContent: 'center', width: 56, height: 46 }}>
+      <Bubble focused={focused} />
+      {renderIcon(focused ? PALETTE.iconActive : color)}
+    </View>
+  );
 
 export default function TabLayout() {
   return (
@@ -59,33 +60,25 @@ export default function TabLayout() {
 
         tabBarStyle: {
           position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: Platform.select({ ios: 76, default: 64 }),
-          paddingHorizontal: 0,
-          backgroundColor: 'transparent',
+          left: 16,
+          right: 16,
+          bottom: Platform.select({ ios: 18, default: 14 }),
+          height: Platform.select({ ios: 72, default: 64 }),
+          paddingHorizontal: 10,
+          // Ensure bar is always visible even if tabBarBackground fails to render
+          backgroundColor: PALETTE.barBg,
           borderTopWidth: 0,
-          borderRadius: 0,
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
-          borderWidth: 1.5,
-          borderColor: PALETTE.outline,
-          overflow: 'hidden',
-          // soft shadow that keeps depth without harsh edges
-          shadowColor: PALETTE.shadow,
-          shadowOpacity: 0.3,
+          borderTopColor: 'transparent',
+          borderRadius: 22,
+          overflow: 'visible',
+          shadowColor: '#000',
+          shadowOpacity: 0.2,
           shadowRadius: 16,
           shadowOffset: { width: 0, height: 10 },
-          elevation: 12,
+          elevation: 16,
         },
         tabBarBackground: () => (
-          <LinearGradient
-            colors={[PALETTE.barBgStart, PALETTE.barBgEnd]}
-            start={{ x: 0.1, y: 0 }}
-            end={{ x: 0.9, y: 1 }}
-            style={{ flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
-          />
+          <View style={{ flex: 1, backgroundColor: PALETTE.barBg, borderRadius: 22 }} />
         ),
 
         // equal spacing for all five icons
@@ -101,7 +94,7 @@ export default function TabLayout() {
         name="explore"
         options={{
           title: 'Explore',
-          tabBarIcon: withIndicator((color) => (
+          tabBarIcon: withBubble((color) => (
             <AntDesign name="flag" size={LIGHT_ICON_SIZE} color={color} />
           )),
         }}
@@ -111,7 +104,7 @@ export default function TabLayout() {
         name="challenges"
         options={{
           title: 'Challenges',
-          tabBarIcon: withIndicator((color) => (
+          tabBarIcon: withBubble((color) => (
             <MaterialCommunityIcons
               size={HEAVY_ICON_SIZE}
               name="sword"
@@ -126,7 +119,7 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: withIndicator((color) => (
+          tabBarIcon: withBubble((color) => (
             <IconSymbol size={ICON_SIZE} name="house.fill" color={color} />
           )),
         }}
@@ -136,7 +129,7 @@ export default function TabLayout() {
         name="petinventory"
         options={{
           title: 'Pets',
-          tabBarIcon: withIndicator((color) => (
+          tabBarIcon: withBubble((color) => (
             <FontAwesome size={HEAVY_ICON_SIZE} name="paw" color={color} />
           )),
         }}
@@ -146,7 +139,7 @@ export default function TabLayout() {
         name="leaderboard"
         options={{
           title: 'Leaderboard',
-          tabBarIcon: withIndicator((color) => (
+          tabBarIcon: withBubble((color) => (
             <MaterialCommunityIcons name="trophy-outline" size={HEAVY_ICON_SIZE} color={color} />
           )),
         }}
