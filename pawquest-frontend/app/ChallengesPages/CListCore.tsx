@@ -95,12 +95,37 @@ const converter: FirestoreDataConverter<Challenge> = {
         ? { ratingAvg, ratingCount, ratingTotal }
         : undefined;
 
+    // Prefer variant.easy pet name and image for list cards
+    const vEasy: any = d?.variants?.easy ?? {};
+    const vEasyPet: any = vEasy?.pet ?? {};
+    const easyImages: string[] | undefined = Array.isArray(vEasy?.petImages)
+      ? vEasy.petImages
+      : Array.isArray(vEasyPet?.images)
+      ? vEasyPet.images
+      : undefined;
+    const easyImageUrl: string | undefined =
+      typeof vEasy?.petImageUrl === 'string'
+        ? vEasy.petImageUrl
+        : typeof vEasyPet?.imageUrl === 'string'
+        ? vEasyPet.imageUrl
+        : Array.isArray(easyImages) && easyImages.length > 0 && typeof easyImages[0] === 'string'
+        ? easyImages[0]
+        : undefined;
+    const easyPetName: string | undefined =
+      typeof vEasy?.rewardPet === 'string'
+        ? vEasy.rewardPet
+        : typeof vEasyPet?.name === 'string'
+        ? vEasyPet.name
+        : typeof vEasyPet?.id === 'string'
+        ? vEasyPet.id
+        : undefined;
+
     return {
       id: snap.id,
       title: String(d?.title ?? ""),
       district: typeof d?.district === "string" ? d.district : undefined,
       description: typeof d?.description === "string" ? d.description : undefined,
-      imageUrl: typeof d?.imageUrl === "string" ? d.imageUrl : undefined,
+      imageUrl: typeof easyImageUrl === 'string' ? easyImageUrl : (typeof d?.imageUrl === 'string' ? d.imageUrl : undefined),
       // Accept several shapes for the challenge start coordinates so distance can be
       // computed even if the field is named differently in the DB (GeoPoint, start, startLat/startLng, location)
       location: (() => {
@@ -130,7 +155,7 @@ const converter: FirestoreDataConverter<Challenge> = {
       distanceMeters: typeof d?.distanceMeters === "number" ? d.distanceMeters : undefined,
       estimatedTimeMin,
       difficulty: (["easy", "hard"] as const).includes(d?.difficulty) ? d.difficulty : undefined,
-      rewardPet: typeof d?.rewardPet === "string" ? d.rewardPet : undefined,
+      rewardPet: easyPetName ?? (typeof d?.rewardPet === 'string' ? d.rewardPet : undefined),
       completedCount: typeof d?.completedCount === "number" ? d.completedCount : 0,
       isLocked: Boolean(d?.isLocked),
       stats,

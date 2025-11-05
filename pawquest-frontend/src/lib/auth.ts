@@ -193,7 +193,7 @@ const isNewUser = !snapshot.exists();
       payload.level = 0;
       payload.pets = [];
       // Auto-equip the starter pet on first sign-in
-      payload.equippedPetId = 'starter-falcon';
+      payload.equippedPetId = 'starter-cat';
     }
 
     await setDoc(docRef, payload, { merge: true });
@@ -202,13 +202,19 @@ const isNewUser = !snapshot.exists();
     // rest of the app (which reads Users/{uid}/pets/*) will show a pet.
     if (isNewUser) {
       try {
-        const starterPetRef = doc(db, 'Users', user.uid, 'pets', 'starter-falcon');
+        const starterPetRef = doc(db, 'Users', user.uid, 'pets', 'starter-cat');
         await setDoc(
           starterPetRef,
           {
-            petId: 'starter-falcon',
-            name: 'Falcon',
-            imageUrl: 'https://i.postimg.cc/cJW1ztH5/Falcon.png',
+            petId: 'starter-cat',
+            name: 'Cat',
+            imageUrl: 'https://i.postimg.cc/brncTDnT/Baby-Cat.png',
+            // Provide an images array so the UI can evolve the starter pet
+            images: [
+              'https://i.postimg.cc/brncTDnT/Baby-Cat.png',
+              'https://i.postimg.cc/rm2cdN33/Teen-Cat.png',
+              'https://i.postimg.cc/rpx2Ltsd/Prime-Cat.png',
+            ],
             challengeId: null,
             variant: null,
             collectedAt: serverTimestamp(),

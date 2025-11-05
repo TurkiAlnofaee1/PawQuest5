@@ -213,6 +213,8 @@ export default function MapScreen() {
 
   // YOU pulse
   const pulse = useRef(new Animated.Value(0)).current;
+  const [variantImageUrl, setVariantImageUrl] = useState<string | null>(null);
+
   useEffect(() => {
     Animated.loop(
       Animated.timing(pulse, {
@@ -347,6 +349,26 @@ export default function MapScreen() {
         if (isMounted) {
           setChallengeTitle(data.title);
           setAudioUrl(data.audioUrl);
+          // Choose pet image from the selected variant (easy or hard), fallback to easy
+          try {
+            const sel: any = preferredVariant ?? readVariant(data, variantParam ?? undefined) ?? easyVariant ?? hardVariant;
+            const petObj: any = sel?.pet ?? {};
+            const imgs: string[] | null = Array.isArray(sel?.petImages)
+              ? sel.petImages
+              : Array.isArray(petObj?.images)
+              ? petObj.images
+              : null;
+            const single: string | null =
+              typeof sel?.petImageUrl === 'string'
+                ? sel.petImageUrl
+                : typeof petObj?.imageUrl === 'string'
+                ? petObj.imageUrl
+                : null;
+            const chosen = imgs && imgs.length > 0 && typeof imgs[0] === 'string' ? imgs[0] : single;
+            setVariantImageUrl(chosen ?? null);
+          } catch {
+            setVariantImageUrl(null);
+          }
         }
       } catch (e: any) {
         Alert.alert("DB error", e?.message ?? "Failed to load challenge.");
@@ -782,6 +804,7 @@ export default function MapScreen() {
               baseParams.actualCalories = String(Math.max(0, Math.round(sessionTotals.calories)));
 
             if (challengeId) baseParams.challengeId = challengeId;
+            if (variantImageUrl) baseParams.imageUrl = variantImageUrl;
             router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
           }}
         />

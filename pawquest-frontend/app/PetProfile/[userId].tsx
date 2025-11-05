@@ -127,87 +127,45 @@ export default function PetProfileScreen() {
     };
   }, [userId]);
 
+    // Show user's highest-level pet (by stage, then XP)
   useEffect(() => {
-    if (!user?.equippedPetId || typeof user.equippedPetId !== 'string') {
+    if (!user?.id) {
       setPet(null);
-      setLoadingPet(false);
       return;
     }
-
     setLoadingPet(true);
-
-    const petId = user.equippedPetId;
-    let unsubTopLevel: Unsubscribe | null = null;
-    let unsubUserScoped: Unsubscribe | null = null;
-    let fallbackActive = false;
-
-    const mapSnapshot = (snap: any) => {
-      const data = snap.data() as any;
-      setPet({
-        id: snap.id,
-        name: data?.name ?? null,
-        imageUrl: data?.imageUrl ?? null,
-        level: numberOrNull(data?.level),
-        evoLevel: numberOrNull(data?.evoLevel),
-        xp: numberOrNull(data?.xp),
-        rarity: data?.rarity ?? null,
+    const unsub = onSnapshot(collection(db, 'Users', user.id, 'pets'), (snap) => {
+      let best: any | null = null;
+      snap.forEach((docSnap) => {
+        const data: any = docSnap.data() ?? {};
+        const xp = typeof data?.xp === 'number' ? data.xp : 0;
+        const imgs: string[] = Array.isArray(data?.images)
+          ? data.images.filter((u: any) => typeof u === 'string' && u.length > 0)
+          : [];
+        const evo = Math.floor(xp / PET_XP_PER_LEVEL);
+        const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : 0;
+        const score = stageIdx * 1000000000 + xp; // prioritize stage, then xp
+        if (!best || score > (best._score ?? -1)) {
+          best = {
+            _score: score,
+            id: docSnap.id,
+            name: data?.name ?? data?.petId ?? null,
+            imageUrl: imgs.length > 0 ? imgs[stageIdx] : (data?.imageUrl ?? null),
+            xp,
+            evoLevel: evo,
+            rarity: data?.rarity ?? null,
+          };
+        }
       });
+      if (best) {
+        setPet({ id: best.id, name: best.name, imageUrl: best.imageUrl, level: null, rarity: best.rarity, xp: best.xp, evoLevel: best.evoLevel });
+      } else {
+        setPet(null);
+      }
       setLoadingPet(false);
-    };
-
-    const subscribeToUserPet = () => {
-      if (!user?.id || fallbackActive) return;
-      fallbackActive = true;
-      unsubUserScoped?.();
-      unsubUserScoped = onSnapshot(
-        doc(db, 'Users', user.id, 'pets', petId),
-        (snap) => {
-          if (!snap.exists()) {
-            setPet(null);
-            setLoadingPet(false);
-            return;
-          }
-          mapSnapshot(snap);
-        },
-        () => {
-          setPet(null);
-          setLoadingPet(false);
-        },
-      );
-    };
-
-    unsubTopLevel = onSnapshot(
-      doc(db, 'pets', petId),
-      (snap) => {
-        if (!snap.exists()) {
-          if (!fallbackActive) {
-            subscribeToUserPet();
-            // wait for fallback listener before ending loading state
-            return;
-          }
-          setPet(null);
-          setLoadingPet(false);
-          return;
-        }
-        mapSnapshot(snap);
-      },
-      () => {
-        if (!fallbackActive) {
-          subscribeToUserPet();
-          return;
-        }
-        if (fallbackActive) {
-          setPet(null);
-          setLoadingPet(false);
-        }
-      },
-    );
-
-    return () => {
-      unsubTopLevel?.();
-      unsubUserScoped?.();
-    };
-  }, [user?.equippedPetId, user?.id]);
+    });
+    return () => unsub();
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id || !authUser?.uid || user.id === authUser.uid) {
@@ -383,8 +341,8 @@ export default function PetProfileScreen() {
                       style={[styles.petImage, { transform: [{ scale: petScale }] }]}
                       resizeMode="contain"
                     />
-                    <Text style={styles.petName}>{petName}</Text>
-                    <Text style={styles.petLevel}>Lvl {petLevel}</Text>
+                    
+                    
                     {user.favoritePetBadge ? (
                       <View style={styles.badgeChip}>
                         <Text style={styles.badgeText}>{user.favoritePetBadge}</Text>
@@ -610,3 +568,7 @@ const styles = StyleSheet.create({
   },
   modalButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
 });
+
+
+
+

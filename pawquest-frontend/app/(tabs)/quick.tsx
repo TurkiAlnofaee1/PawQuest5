@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, getDocs, onSnapshot, query, limit } from 'firebase/firestore';
 import { auth, db } from '@/src/lib/firebase';
-import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
+import { PET_XP_PER_LEVEL, PET_MAX_LEVEL } from '@/src/lib/playerProgress';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
 
@@ -14,7 +14,7 @@ export default function QuickChallengeDetails() {
 
   // Equipped pet
   const [equippedPetId, setEquippedPetId] = useState<string | null>(null);
-  const [equippedPet, setEquippedPet] = useState<{ id: string; name?: string | null; imageUrl?: string | null; xp?: number | null; evoLevel?: number | null } | null>(null);
+  const [equippedPet, setEquippedPet] = useState<{ id: string; name?: string | null; imageUrl?: string | null; images?: string[] | null; xp?: number | null; evoLevel?: number | null } | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -33,17 +33,26 @@ export default function QuickChallengeDetails() {
     const unsubPet = onSnapshot(doc(db, 'Users', uid, 'pets', equippedPetId), (snap) => {
       if (!snap.exists()) return setEquippedPet(null);
       const d = snap.data() as any;
-      setEquippedPet({ id: snap.id, ...d });
+      const xp = typeof d?.xp === 'number' ? d.xp : 0;
+      const evoLvl = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
+      const imgs: string[] = Array.isArray(d?.images) ? d.images.filter((u: any) => typeof u === 'string' && u.length > 0) : [];
+      const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
+      const stageName = ['Baby','Big','King'][Math.min(2, stageIdx)] ?? 'Baby';
+      const baseName = (d?.name ?? 'Pet').toString();
+      setEquippedPet({ id: snap.id, ...d, name: `${stageName} ${baseName}` });
     });
     return () => unsubPet();
   }, [uid, equippedPetId]);
 
   const levelInfo = useMemo(() => {
-    if (!equippedPet) return { level: 0, progressPct: 0 };
+    if (!equippedPet) return { level: 0, progressPct: 0, remainXp: PET_XP_PER_LEVEL, atMax: false };
     const xp = typeof equippedPet.xp === 'number' ? equippedPet.xp : 0;
-    const evoLevel = typeof equippedPet.evoLevel === 'number' ? equippedPet.evoLevel : Math.floor(xp / PET_XP_PER_LEVEL);
+    const evoLevelRaw = Math.floor(xp / PET_XP_PER_LEVEL);
+    const evoLevel = Math.min(PET_MAX_LEVEL, evoLevelRaw);
     const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
-    return { level: evoLevel, progressPct: Math.max(0, Math.min(1, progress)) };
+    const atMax = evoLevel >= PET_MAX_LEVEL;
+    const remain = atMax ? 0 : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0);
+    return { level: evoLevel, progressPct: Math.max(0, Math.min(1, progress)), remainXp: remain, atMax };
   }, [equippedPet]);
 
   // Stories (pick from the first challenge's stories to mirror ChallengeDetails fetching shape)
@@ -89,18 +98,18 @@ export default function QuickChallengeDetails() {
           <View style={styles.petCard}>
             <View style={styles.petRow}>
               <Image
-                source={equippedPet.imageUrl ? { uri: equippedPet.imageUrl } : require('../../assets/images/icon.png')}
+                source={(Array.isArray(equippedPet.images) && equippedPet.images.length > 0)
+                  ? { uri: equippedPet.images[Math.min(equippedPet.images.length - 1, Math.min(PET_MAX_LEVEL, Math.floor((equippedPet.xp ?? 0)/PET_XP_PER_LEVEL)))] }
+                  : (equippedPet.imageUrl ? { uri: equippedPet.imageUrl } : require('../../assets/images/icon.png'))}
                 style={styles.petImg}
                 resizeMode="contain"
               />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.petTitle}>Equipped Pet</Text>
                 <Text style={styles.petName} numberOfLines={1}>{(equippedPet.name ?? 'Pet').toString().toUpperCase()}</Text>
-                <View style={styles.progressBar}>
-                  <View style={[styles.progressFill, { width: `${Math.round(levelInfo.progressPct * 100)}%` }]} />
-                </View>
-                <Text style={styles.levelText}>Lvl {levelInfo.level}</Text>
-              </View>
+               {(() => { const xpNow = typeof equippedPet?.xp === 'number' ? equippedPet.xp : 0; const evo = Math.floor(xpNow / PET_XP_PER_LEVEL); const imgs = Array.isArray(equippedPet?.images) ? (equippedPet!.images as string[]).filter((u) => typeof u === 'string' && u.length > 0) : []; const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : 0; const atMaxStage = stageIdx >= 2; const displayLvl = stageIdx + 1; return (<><View></View>{!atMaxStage && (<View style={styles.progressBar}><View style={[styles.progressFill, { width: `${Math.round(levelInfo.progressPct * 100)}%` }]} />
+               </View>)}<Text style={styles.levelText}>{atMaxStage ? 'Lvl 3 MAX!' : 'Lvl ' + displayLvl + ' • Next in ' + levelInfo.remainXp + ' XP'} </Text></>); })()}
+             </View>
             </View>
           </View>
         ) : (
@@ -243,3 +252,5 @@ const styles = StyleSheet.create({
   modalItem: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E5E7EB' },
   modalItemText: { fontSize: 15, fontWeight: '800', color: '#0B3D1F' },
 });
+
+

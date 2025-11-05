@@ -20,7 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collection, doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '@/src/lib/firebase';
 import { getSteps7d, getCalories7d } from '@/src/lib/userMetrics';
-import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
+import { PET_XP_PER_LEVEL, PET_MAX_LEVEL } from '@/src/lib/playerProgress';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/src/hooks/useAuth';
 
@@ -375,6 +375,7 @@ const Home: React.FC = () => {
   const [petImageUrl, setPetImageUrl] = useState<string | null>(null);
   const [petEvoLevel, setPetEvoLevel] = useState<number | null>(null);
   const [petXp, setPetXp] = useState<number | null>(null);
+  const [playerLevel, setPlayerLevel] = useState<number>(0);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -386,7 +387,10 @@ const Home: React.FC = () => {
       return;
     }
     const unsubProfile = onSnapshot(doc(db, 'Users', uid), (snap) => {
-      const equippedPetId = (snap.data() as any)?.equippedPetId as string | undefined;
+      const data: any = snap.data() ?? {};
+      const equippedPetId = data?.equippedPetId as string | undefined;
+      const lvl = typeof data?.level === 'number' ? data.level : 0;
+      setPlayerLevel(Math.max(0, lvl));
       if (!equippedPetId) {
         setPetName(null);
         setPetImageUrl(null);
@@ -397,10 +401,19 @@ const Home: React.FC = () => {
       // subscribe to the equipped pet doc
       const unsubPet = onSnapshot(doc(db, 'Users', uid, 'pets', equippedPetId), (petSnap) => {
         const d: any = petSnap.data() ?? {};
-        setPetName(typeof d?.name === 'string' && d.name.trim() ? d.name : equippedPetId);
-        setPetImageUrl(typeof d?.imageUrl === 'string' ? d.imageUrl : null);
-        setPetEvoLevel(typeof d?.evoLevel === 'number' ? d.evoLevel : 0);
-        setPetXp(typeof d?.xp === 'number' ? d.xp : 0);
+        const xp = typeof d?.xp === 'number' ? d.xp : 0;
+        const evoLvl = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
+        const imgs: string[] = Array.isArray(d?.images)
+          ? d.images.filter((u: any) => typeof u === 'string' && u.length > 0)
+          : [];
+        // Stage changes every evolution: Lvl 0->img0, Lvl 1->img1, Lvl 2+->img2
+        const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
+        const stageName = ['Baby', 'Big', 'King'][Math.min(2, stageIdx)] ?? 'Baby';
+        const baseName = (typeof d?.name === 'string' && d.name.trim()) ? d.name : equippedPetId;
+        setPetName(`${stageName} ${baseName}`);
+        setPetImageUrl(imgs.length > 0 ? imgs[stageIdx] : (typeof d?.imageUrl === 'string' ? d.imageUrl : null));
+        setPetEvoLevel(evoLvl);
+        setPetXp(xp);
       });
       // cleanup pet sub-subscription when equippedPetId changes
       return unsubPet;
@@ -657,26 +670,33 @@ const Home: React.FC = () => {
               activeOpacity={0.85}
               style={styles.petNameBox}
             >
-              <Text style={styles.petNameText}>{petName}</Text>
+              <Text style={styles.petNameText}>{petName} • Lvl {playerLevel}</Text>
             </TouchableOpacity>
           ) : null}
           {petName !== null ? (
             <View style={styles.evolutionBox}>
-              <Text style={styles.evolutionTitle}>Evolution Level {Math.max(0, petEvoLevel ?? 0)}</Text>
               {(() => {
-                const level = Math.max(0, petEvoLevel ?? 0);
+                const evo = Math.max(0, petEvoLevel ?? 0);
+                const stageIdx = Math.min(2, evo);
+                const displayLvl = stageIdx + 1;
+                const atMaxStage = stageIdx >= 2;
                 const totalXp = Math.max(0, petXp ?? 0);
-                const xpInLevel = totalXp - level * PET_XP_PER_LEVEL;
+                const xpInLevel = totalXp - evo * PET_XP_PER_LEVEL;
                 const pct = Math.max(0, Math.min(1, xpInLevel / PET_XP_PER_LEVEL));
                 return (
                   <>
-                    <View style={styles.progressBarBg}>
-                      <View style={[styles.progressBarFill, { width: `${pct * 100}%` }]} />
-                    </View>
-                    <View style={styles.progressLabelsRow}>
-                      <Text style={styles.progressLabel}>Lvl {level}</Text>
-                      <Text style={styles.progressLabel}>Lvl {level + 1}</Text>
-                    </View>
+                    <Text style={styles.evolutionTitle}>{atMaxStage ? 'Lvl 3 MAX!' : `Lvl ${displayLvl}`}</Text>
+                    {!atMaxStage && (
+                      <>
+                        <View style={styles.progressBarBg}>
+                          <View style={[styles.progressBarFill, { width: `${pct * 100}%` }]} />
+                        </View>
+                        <View style={styles.progressLabelsRow}>
+                          <Text style={styles.progressLabel}>{`Lvl ${displayLvl}`}</Text>
+                          <Text style={styles.progressLabel}>{`Lvl ${displayLvl + 1}`}</Text>
+                        </View>
+                      </>
+                    )}
                   </>
                 );
               })()}
@@ -742,3 +762,5 @@ const Home: React.FC = () => {
 };
 
 export default Home;
+
+

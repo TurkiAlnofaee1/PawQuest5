@@ -230,6 +230,20 @@ export default function Explore() {
         }
 
         if (typeof lat === "number" && typeof lng === "number") {
+          // prefer variants.easy.pet image for map pins
+          const easyVar: any = d?.variants?.easy ?? {};
+          const easyPet: any = easyVar?.pet ?? {};
+          const imgs: string[] | undefined = Array.isArray(easyVar?.petImages)
+            ? easyVar.petImages
+            : Array.isArray(easyPet?.images)
+            ? easyPet.images
+            : undefined;
+          const easyImageUrl =
+            (Array.isArray(imgs) && imgs.length > 0 && typeof imgs[0] === 'string')
+              ? imgs[0]
+              : (typeof easyVar?.petImageUrl === 'string'
+                  ? easyVar.petImageUrl
+                  : (typeof easyPet?.imageUrl === 'string' ? easyPet.imageUrl : undefined));
           arr.push({
             id: docSnap.id,
             title: d.title ?? d.stats?.title ?? "Challenge",
@@ -241,7 +255,7 @@ export default function Explore() {
             distanceMeters,
             ratingAvg,
             ratingCount,
-            petImageUrl: d.petImageUrl,
+            petImageUrl: easyImageUrl ?? d.petImageUrl,
             xp: typeof xp === "number" ? xp : undefined,
           });
         }
