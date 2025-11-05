@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "@/src/lib/firebase";
 import RatingModal from "@/components/RatingModal";
+import { awardPlayerProgress } from "@/src/lib/playerProgress";
 import { getUserChallengeRating, upsertChallengeRating } from "@/src/lib/firestoreChallenges";
 
 type RouteParams = {
@@ -184,10 +185,20 @@ export default function ChallengeReward() {
         const snap = await getDoc(doc(db, "challenges", challengeId));
         if (!snap.exists() || !active) return;
         const data = snap.data() as any;
+        const variantObj = (data?.variants ?? {})[normalizedVariant] ?? {};
+        const vPet = variantObj?.pet ?? {};
+        const vRewardPet: string | undefined =
+          typeof variantObj?.rewardPet === 'string'
+            ? variantObj.rewardPet
+            : typeof vPet?.name === 'string'
+            ? vPet.name
+            : typeof vPet?.id === 'string'
+            ? vPet.id
+            : undefined;
         setChallengeMeta((prev) => ({
           title: typeof data?.title === "string" ? data.title : prev.title,
           subtitle: typeof data?.subtitle === "string" ? data.subtitle : prev.subtitle,
-          rewardPet: typeof data?.rewardPet === "string" ? data.rewardPet : prev.rewardPet,
+          rewardPet: vRewardPet ?? (typeof data?.rewardPet === "string" ? data.rewardPet : prev.rewardPet),
           imageUrl:
             typeof data?.imageUrl === "string"
               ? data.imageUrl
@@ -227,13 +238,88 @@ export default function ChallengeReward() {
           setCategoryKey(String(data.categoryId).toLowerCase());
         }
         if (!petImage) {
+          // Prefer variant pet image if present
+          const vImages = Array.isArray(variantObj?.petImages)
+            ? variantObj.petImages
+            : Array.isArray(vPet?.images)
+            ? vPet.images
+            : null;
+          const variantImg =
+            (Array.isArray(vImages) && vImages.length > 0 && typeof vImages[0] === 'string')
+              ? vImages[0]
+              : (typeof variantObj?.petImageUrl === 'string' ? variantObj.petImageUrl : (typeof vPet?.imageUrl === 'string' ? vPet.imageUrl : null));
           const fromDoc =
-            typeof data?.petImageUrl === "string"
+            variantImg ??
+            (typeof data?.petImageUrl === "string"
               ? data.petImageUrl
               : typeof data?.imageUrl === "string"
               ? data.imageUrl
-              : null;
+              : null);
           if (fromDoc) setPetImage(fromDoc);
+        }
+
+        // Ensure pet is recorded in the user's collection if missing
+        try {
+          const uid = auth.currentUser?.uid;
+          if (!uid) return;
+          const petName =
+            (typeof variantObj?.rewardPet === 'string' ? variantObj.rewardPet : undefined) ??
+            (typeof vPet?.name === 'string' ? vPet.name : undefined) ??
+            (typeof vPet?.id === 'string' ? vPet.id : undefined) ??
+            (typeof data?.rewardPet === 'string' ? data.rewardPet : undefined);
+          if (!petName) return;
+          const images: string[] | null = Array.isArray(vPet?.images)
+            ? vPet.images
+            : Array.isArray(variantObj?.petImages)
+            ? variantObj.petImages
+            : null;
+          const single: string | null =
+            typeof vPet?.imageUrl === 'string'
+              ? vPet.imageUrl
+              : typeof variantObj?.petImageUrl === 'string'
+              ? variantObj.petImageUrl
+              : null;
+          const petDocId = `challenge-${challengeId}-${normalizedVariant}`;
+          const petRef = doc(db, 'Users', uid, 'pets', petDocId);
+          const petSnap = await getDoc(petRef);
+          if (!petSnap.exists()) {
+            await setDoc(
+              petRef,
+              {
+                petId: petName,
+                name: petName,
+                imageUrl: single ?? (Array.isArray(images) && images.length > 0 ? images[0] : null),
+                images: Array.isArray(images) ? images : (single ? [single] : []),
+                challengeId,
+                variant: normalizedVariant,
+                collectedAt: serverTimestamp(),
+                xp: 0,
+                evoLevel: 0,
+              },
+              { merge: true },
+            );
+          }
+
+          // If XP has not been applied yet (pet xp is still 0), apply it now as a fallback
+          const petAfter = (await getDoc(petRef)).data() as any | undefined;
+          const currentXp = typeof petAfter?.xp === 'number' ? petAfter.xp : 0;
+          const xpEarned = typeof (data?.variants?.[normalizedVariant]?.xp) === 'number'
+            ? data.variants[normalizedVariant].xp
+            : undefined;
+          if (currentXp === 0 && typeof xpEarned === 'number' && xpEarned > 0) {
+            await awardPlayerProgress({
+              uid,
+              challengeId: challengeId ?? null,
+              xpEarned,
+              petId: petName,
+              petName,
+              petImageUrl: single ?? (Array.isArray(images) && images.length > 0 ? images[0] : null),
+              evolutionImages: Array.isArray(images) ? images : null,
+              variant: normalizedVariant,
+            });
+          }
+        } catch {
+          // best effort; non-blocking
         }
       } catch (error) {
         if (__DEV__) {

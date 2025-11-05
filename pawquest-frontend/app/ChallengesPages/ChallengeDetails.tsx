@@ -422,6 +422,20 @@ export default function ChallengeDetails() {
 
   const rewardImage = useMemo(() => {
     if (!data) return null;
+    // Prefer variant-specific pet images
+    const v: any = data?.variants?.[tab] ?? {};
+    const vPet: any = v?.pet ?? {};
+    const vImages: string[] | null = Array.isArray(v?.petImages)
+      ? v.petImages
+      : Array.isArray(vPet?.images)
+      ? vPet.images
+      : null;
+    const fromVariantArray = vImages && vImages.length > 0 && typeof vImages[0] === 'string' ? vImages[0] : null;
+    const fromVariantSingle =
+      typeof v?.petImageUrl === 'string' ? v.petImageUrl : typeof vPet?.imageUrl === 'string' ? vPet.imageUrl : null;
+    if (fromVariantArray) return fromVariantArray;
+    if (fromVariantSingle) return fromVariantSingle;
+    // Fallbacks
     if (typeof data.petImageUrl === "string" && data.petImageUrl.length > 0) {
       return data.petImageUrl;
     }
@@ -429,7 +443,7 @@ export default function ChallengeDetails() {
       return data.imageUrl;
     }
     return null;
-  }, [data]);
+  }, [data, tab]);
 
   const rewardPoints = useMemo(() => {
     if (typeof data?.rewardPoints === "number" && Number.isFinite(data.rewardPoints)) {
@@ -587,7 +601,12 @@ export default function ChallengeDetails() {
                 <MaterialCommunityIcons name="bird" size={72} color="#0B3D1F" />
               )}
             </View>
-            <Text style={styles.rewardPetName}>{data.rewardPet ?? "-"}</Text>
+            <Text style={styles.rewardPetName}>{(() => {
+              const v: any = data?.variants?.[tab] ?? {};
+              const vPet: any = v?.pet ?? {};
+              const vn = typeof v?.rewardPet === 'string' ? v.rewardPet : (typeof vPet?.name === 'string' ? vPet.name : (typeof vPet?.id === 'string' ? vPet.id : undefined));
+              return vn ?? (data?.rewardPet ?? "-");
+            })()}</Text>
             <View style={[styles.pointsPill, { backgroundColor: pal.pointsPillBg, borderColor: pal.tabBorder }]}>
               <Text style={styles.pointsText}>
                 {rewardPoints !== null ? `${Math.round(rewardPoints).toLocaleString()} points` : "Reward awaits!"}

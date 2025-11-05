@@ -14,13 +14,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 import { auth, db } from '@/src/lib/firebase';
-import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
+import { PET_XP_PER_LEVEL, PET_MAX_LEVEL } from '@/src/lib/playerProgress';
 
 type PetDoc = {
   id: string;
   petId?: string | null;
   name?: string | null;
   imageUrl?: string | null;
+  images?: string[] | null;
   xp?: number | null;
   evoLevel?: number | null;
 };
@@ -61,10 +62,7 @@ export default function PetInventoryScreen() {
   }, [uid]);
 
   const collected = pets.length;
-  const sortedPets = useMemo(() => {
-    if (!equippedPetId) return pets;
-    return [...pets].sort((a, b) => (a.id === equippedPetId ? -1 : b.id === equippedPetId ? 1 : 0));
-  }, [pets, equippedPetId]);
+  const sortedPets = pets;
 
   const handleEquip = async (petDocId: string) => {
     if (!uid) return;
@@ -89,26 +87,34 @@ export default function PetInventoryScreen() {
   };
 
   const renderCard = ({ item }: { item: PetDoc }) => {
-    const equipped = item.id === equippedPetId;
     const xp = typeof item.xp === 'number' ? item.xp : 0;
-    const evoLevel = typeof item.evoLevel === 'number' ? item.evoLevel : Math.floor(xp / PET_XP_PER_LEVEL);
+    const evoLevel = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
     const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
+    const imgs = Array.isArray(item.images) ? item.images.filter((u) => typeof u === 'string' && u.length > 0) : [];
+    const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLevel) : 0;
+    const stageImg = imgs.length > 0 ? imgs[stageIdx] : (item.imageUrl ?? null);
+    const stageName = ['Baby','Big','King'][Math.min(2, stageIdx)] ?? 'Baby';
+    const atMax = imgs.length > 0 ? stageIdx >= imgs.length - 1 : false;
+    const displayLvl = stageIdx + 1;
+    const remain = atMax ? 0 : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0);
     return (
-      <Pressable style={[styles.card, equipped && styles.cardEquipped]} onPress={() => onSelectPet(item.id)}>        
+      <Pressable style={[styles.card, item.id === selectedPetId && styles.cardSelected]} onPress={() => onSelectPet(item.id)}>
         <Image
-          source={item.imageUrl ? { uri: item.imageUrl } : require('../../assets/images/icon.png')}
+          source={stageImg ? { uri: stageImg } : require('../../assets/images/icon.png')}
           style={styles.petImg}
           resizeMode="contain"
         />
         <View style={styles.cardHeader}>
           <Text style={styles.petName} numberOfLines={1}>
-            {(item.name ?? item.petId ?? 'Pet').toString().toUpperCase()}
+            {(`${stageName} ${item.name ?? item.petId ?? 'Pet'}`).toString().toUpperCase()}
           </Text>
         </View>
-        <Text style={styles.levelText}>Lvl {evoLevel}</Text>
-        <View style={styles.progressBar}>
-          <View style={[styles.progressFill, { width: `${Math.min(100, Math.max(0, progress * 100))}%` }]} />
-        </View>
+        <Text style={styles.levelText}>{`Lvl ${displayLvl} ${atMax ? 'MAX!' : `- Next in ${remain} XP`}`}</Text>
+        {!atMax && (
+          <View style={styles.progressBar}>
+            <View style={[styles.progressFill, { width: `${Math.min(100, Math.max(0, progress * 100))}%` }]} />
+          </View>
+        )}
       </Pressable>
     );
   };
@@ -165,7 +171,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  cardEquipped: { borderWidth: 2, borderColor: '#10B981' },
+  cardSelected: { borderWidth: 2, borderColor: '#10B981' },
   petImg: { width: '100%', height: 90, alignSelf: 'center' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   petName: { flexShrink: 1, fontWeight: '800', fontSize: 14, color: '#0B3D1F' },
@@ -190,20 +196,27 @@ type FeaturedProps = {
 function FeaturedPet({ pet, equipped, onEquip }: FeaturedProps) {
   if (!pet) return null;
   const xp = typeof pet.xp === 'number' ? pet.xp : 0;
-  const evoLevel = typeof pet.evoLevel === 'number' ? pet.evoLevel : Math.floor(xp / PET_XP_PER_LEVEL);
+  const evoLevel = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
   const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
+  const imgs = Array.isArray(pet.images) ? pet.images.filter((u) => typeof u === 'string' && u.length > 0) : [];
+  const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLevel) : 0;
+  const stageImg = imgs.length > 0 ? imgs[stageIdx] : (pet.imageUrl ?? null);
+  const stageName = ['Baby','Big','King'][Math.min(2, stageIdx)] ?? 'Baby';
+  const atMax = imgs.length > 0 ? stageIdx >= imgs.length - 1 : false;
+  const displayLvl = stageIdx + 1;
+  const remain = atMax ? 0 : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0);
 
   return (
     <View style={featuredStyles.wrapper}>
       {/* Big highlighted card for the featured pet */}
       <View style={featuredStyles.heroCard}>
         <Image
-          source={pet.imageUrl ? { uri: pet.imageUrl } : require('../../assets/images/icon.png')}
+          source={stageImg ? { uri: stageImg } : require('../../assets/images/icon.png')}
           style={featuredStyles.image}
           resizeMode="contain"
         />
         <View style={featuredStyles.nameRow}>
-          <Text style={featuredStyles.nameText}>{(pet.name ?? pet.petId ?? 'Pet').toString().toUpperCase()}</Text>
+          <Text style={featuredStyles.nameText}>{(`${stageName} ${pet.name ?? pet.petId ?? 'Pet'}`).toString().toUpperCase()}</Text>
           {!equipped && <Ionicons name="brush" size={16} color="#374151" style={{ marginLeft: 6 }} />}
         </View>
         <View style={featuredStyles.actions}>
@@ -217,15 +230,17 @@ function FeaturedPet({ pet, equipped, onEquip }: FeaturedProps) {
         </View>
       </View>
 
-      {/* Evolution progress in its own card */}
+      {/* Level progress in its own card */}
       <View style={featuredStyles.evoCard}>
         <View style={featuredStyles.evoRow}>
-          <Text style={featuredStyles.evoLabel}>Evolution Level</Text>
-          <Text style={featuredStyles.evoValue}>Lvl {evoLevel}</Text>
+          <Text style={featuredStyles.evoLabel}>Level</Text>
+          <Text style={featuredStyles.evoValue}>{atMax ? 'Lvl 3 MAX!' : `Lvl ${displayLvl} - Next in ${remain} XP`}</Text>
         </View>
-        <View style={featuredStyles.progressBar}>
-          <View style={[featuredStyles.progressFill, { width: `${Math.min(100, Math.max(0, progress * 100))}%` }]} />
-        </View>
+        {!atMax && (
+          <View style={featuredStyles.progressBar}>
+            <View style={[featuredStyles.progressFill, { width: `${Math.min(100, Math.max(0, progress * 100))}%` }]} />
+          </View>
+        )}
       </View>
     </View>
   );
@@ -276,3 +291,5 @@ const featuredStyles = StyleSheet.create({
   progressBar: { marginTop: 8, height: 10, backgroundColor: '#E5E7EB', borderRadius: 10, width: '100%', overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#10B981' },
 });
+
+

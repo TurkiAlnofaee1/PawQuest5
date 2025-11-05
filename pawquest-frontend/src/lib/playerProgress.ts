@@ -9,7 +9,9 @@ import { db } from "./firebase";
 
 export const XP_PER_LEVEL = 1000;
 // Pet evolution threshold: every 500 XP grants 1 evolution level
-export const PET_XP_PER_LEVEL = 500;
+// Pet evolution rules
+export const PET_XP_PER_LEVEL = 10_000; // 10k XP per evolution
+export const PET_MAX_LEVEL = 30; // Cap evolution at level 30
 
 export function calculateLevel(xp: number): number {
   if (!Number.isFinite(xp) || xp <= 0) return 0;
@@ -28,6 +30,8 @@ type AwardParams = {
   petId?: string | null;
   petName?: string | null;
   petImageUrl?: string | null;
+  // Optional list of evolution images ordered by stage (0..n)
+  evolutionImages?: string[] | null;
   variant?: string | null;
 };
 
@@ -38,6 +42,7 @@ export async function awardPlayerProgress({
   petId,
   petName,
   petImageUrl,
+  evolutionImages,
   variant,
 }: AwardParams): Promise<{ xp: number; level: number }> {
   if (!uid) throw new Error("Missing uid for progress award.");
@@ -67,12 +72,18 @@ export async function awardPlayerProgress({
     return { xp: nextXp, level: nextLevel };
   });
 
+  // Track the pet doc we may create in this call to use as a fallback for XP
+  let createdPetDocId: string | null = null;
+
   if (petId) {
     try {
       const safeBase = petId ? petId.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase() : 'pet';
+      const vnorm = (variant ?? '')
+        ? String(variant).toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        : '';
       const petDocId =
         typeof challengeId === 'string' && challengeId.length > 0
-          ? `challenge-${challengeId}`
+          ? `challenge-${challengeId}${vnorm ? `-${vnorm}` : ''}`
           : `${safeBase}-${Date.now().toString(36)}`;
       const petRef = doc(db, 'Users', uid, 'pets', petDocId);
       await setDoc(
@@ -81,6 +92,13 @@ export async function awardPlayerProgress({
           petId,
           name: petName ?? petId,
           imageUrl: petImageUrl ?? null,
+          // Persist images array for client-side evolution rendering
+          images:
+            Array.isArray(evolutionImages)
+              ? evolutionImages.filter((u) => typeof u === 'string' && u.length > 0)
+              : petImageUrl
+              ? [petImageUrl]
+              : [],
           challengeId: challengeId ?? null,
           variant: variant ?? null,
           collectedAt: serverTimestamp(),
@@ -89,6 +107,7 @@ export async function awardPlayerProgress({
         },
         { merge: true },
       );
+      createdPetDocId = petDocId;
     } catch (error) {
       if (__DEV__) {
         // eslint-disable-next-line no-console
@@ -103,19 +122,30 @@ export async function awardPlayerProgress({
       await runTransaction(db, async (tx: Transaction) => {
         const userSnap = await tx.get(userRef);
         const equippedPetId = (userSnap.data() as any)?.equippedPetId as string | undefined;
-        if (!equippedPetId) return;
-        const equippedPetRef = doc(db, 'Users', uid, 'pets', equippedPetId);
-        const petSnap = await tx.get(equippedPetRef);
-        if (!petSnap.exists()) return;
-        const data: any = petSnap.data() ?? {};
+        let targetPetId: string | undefined = equippedPetId;
+        let targetPetRef = targetPetId ? doc(db, 'Users', uid, 'pets', targetPetId) : null;
+
+        // If no equipped pet or it doesn't exist, fall back to the pet we just created (if any)
+        if (targetPetRef) {
+          const petSnap = await tx.get(targetPetRef);
+          if (!petSnap.exists()) {
+            targetPetRef = null;
+          }
+        }
+
+        if (!targetPetRef && createdPetDocId) {
+          targetPetRef = doc(db, 'Users', uid, 'pets', createdPetDocId);
+        }
+
+        if (!targetPetRef) return;
+
+        const petSnap2 = await tx.get(targetPetRef);
+        if (!petSnap2.exists()) return;
+        const data: any = petSnap2.data() ?? {};
         const currentPetXp = typeof data?.xp === 'number' && Number.isFinite(data.xp) ? data.xp : 0;
         const nextPetXp = Math.max(0, currentPetXp + xpEarned);
-        const nextEvoLevel = Math.floor(nextPetXp / PET_XP_PER_LEVEL);
-        tx.set(
-          equippedPetRef,
-          { xp: nextPetXp, evoLevel: nextEvoLevel, updatedAt: serverTimestamp() },
-          { merge: true },
-        );
+        const nextEvoLevel = Math.min(PET_MAX_LEVEL, Math.floor(nextPetXp / PET_XP_PER_LEVEL));
+        tx.set(targetPetRef, { xp: nextPetXp, evoLevel: nextEvoLevel, updatedAt: serverTimestamp() }, { merge: true });
       });
     } catch (err) {
       if (__DEV__) {

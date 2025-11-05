@@ -68,6 +68,7 @@ export default function ARPetScreen() {
   const [showCamera, setShowCamera] = useState(true);
 
   const [petUrl, setPetUrl] = useState<string | null>(null);
+  const [petImages, setPetImages] = useState<string[] | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -190,10 +191,22 @@ export default function ARPetScreen() {
 
       setVariantKey(resolvedVariantKey);
 
+      // Prefer variant-specific reward pet when present
+      const variantPetObj: any = (resolvedVariant as any)?.pet ?? {};
+      const variantRewardPet: string | undefined =
+        typeof (resolvedVariant as any)?.rewardPet === 'string'
+          ? (resolvedVariant as any).rewardPet
+          : typeof variantPetObj?.name === 'string'
+          ? variantPetObj.name
+          : typeof variantPetObj?.id === 'string'
+          ? variantPetObj.id
+          : undefined;
+
       setChallengeMeta({
         title: typeof data?.title === "string" ? data.title : challengeMeta.title,
         subtitle: typeof data?.subtitle === "string" ? data.subtitle : undefined,
-        rewardPet: typeof data?.rewardPet === "string" ? data.rewardPet : undefined,
+        rewardPet:
+          variantRewardPet ?? (typeof data?.rewardPet === "string" ? data.rewardPet : undefined),
         imageUrl:
           typeof data?.imageUrl === "string"
             ? data.imageUrl
@@ -226,7 +239,39 @@ export default function ARPetScreen() {
           : undefined,
       });
 
-      const image = data?.petImageUrl ?? data?.imageUrl ?? data?.dragon ?? null;
+      // Support multiple evolution images; prefer variant-specific when available
+      const imagesFromVariant: any =
+        Array.isArray((resolvedVariant as any)?.petImages)
+          ? (resolvedVariant as any).petImages
+          : Array.isArray(variantPetObj?.images)
+          ? variantPetObj.images
+          : null;
+      const imageFromVariant: string | null =
+        typeof (resolvedVariant as any)?.petImageUrl === 'string'
+          ? (resolvedVariant as any).petImageUrl
+          : typeof variantPetObj?.imageUrl === 'string'
+          ? variantPetObj.imageUrl
+          : null;
+
+      const imagesFromDoc: any =
+        imagesFromVariant ??
+        (Array.isArray((data as any)?.petImages)
+          ? (data as any).petImages
+          : Array.isArray((data as any)?.info?.petImages)
+          ? (data as any).info.petImages
+          : null);
+
+      const image =
+        (Array.isArray(imagesFromDoc) && imagesFromDoc.length > 0 && typeof imagesFromDoc[0] === 'string')
+          ? imagesFromDoc[0]
+          : imageFromVariant ?? (data as any)?.petImageUrl ?? (data as any)?.info?.petImageUrl ?? (data as any)?.imageUrl ?? (data as any)?.dragon ?? null;
+
+      if (Array.isArray(imagesFromDoc)) {
+        const cleaned = imagesFromDoc.filter((u: any) => typeof u === 'string' && u.length > 0);
+        setPetImages(cleaned.length > 0 ? cleaned : null);
+      } else {
+        setPetImages(null);
+      }
       if (!image) {
         setError('Add a string field "petImageUrl" to this challenge.');
         return;
@@ -401,6 +446,7 @@ export default function ARPetScreen() {
             petId: challengeMeta.rewardPet ?? null,
             petName: challengeMeta.rewardPet ?? null,
             petImageUrl: petUrl ?? null,
+            evolutionImages: petImages ?? null,
             variant: variantKey,
           });
         } catch (err) {
