@@ -236,7 +236,7 @@ function Circle({ user, rank, ringColor, size = 72 }: { user?: Player; rank: num
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   header: { paddingHorizontal: 20, paddingTop: 10 },
-  title: { fontSize: 34, fontWeight: '900', color: '#000' },
+  title: { fontSize: 34, fontWeight: '900', color: '#ffffffff' },
   pills: { flexDirection: 'row', gap: 10, marginTop: 10 },
   pill: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999 },
   // Selected chip: white background, dark text

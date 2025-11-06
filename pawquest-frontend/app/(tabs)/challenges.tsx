@@ -227,13 +227,13 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     paddingHorizontal: 20,
   },
-  h1: { fontSize: 35, fontWeight: "900", color: "#000000ff" },
+  h1: { fontSize: 35, fontWeight: "900", color: "#ffffffff" },
   h2: {
     marginTop: 2,
     paddingHorizontal: 4,
     fontSize: 16,
     fontWeight: "700",
-    color: "rgba(0, 0, 0, 0.75)",
+    color: "rgba(255, 255, 255, 0.75)",
   },
 
   listContent: {

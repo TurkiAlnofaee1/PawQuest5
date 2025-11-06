@@ -57,7 +57,7 @@ type ChallengeMeta = {
 
 const DEFAULT_BG = require("../../assets/images/ImageBackground.jpg");
 const BG_BY_CATEGORY: Record<string, any> = {
-  city: require("../../assets/images/Riyadd.jpg"),
+  city: require("../../assets/images/CityBg.jpg"),
   mountain: require("../../assets/images/mountainss.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
   sea: require("../../assets/images/seaa.jpg"),

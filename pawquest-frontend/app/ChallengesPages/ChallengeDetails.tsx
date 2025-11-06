@@ -41,7 +41,7 @@ import {
 /* ------------------------ category backgrounds ------------------------ */
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
 const bgByCategory: Record<string, any> = {
-  city: require("../../assets/images/Riyadd.jpg"),
+  city: require("../../assets/images/CityBg.jpg"),
   mountain: require("../../assets/images/mountainss.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
   sea: require("../../assets/images/seaa.jpg"),
