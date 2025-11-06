@@ -1,3 +1,4 @@
+// src/lib/experience.ts
 import { db } from './firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
@@ -8,8 +9,10 @@ export type LatLng = { latitude: number; longitude: number };
 export type NewChallenge = {
   name: string;
   category: Category;
-  script: string;
+  // Story removed from the form; keep optional for backward compatibility if other code still passes it.
+  script?: string;
   pointsReward: number;
+  /** Base/normal walking estimate (from ORS) */
   durationMinutes: number;
   suggestedReward?: string;
   createdBy: string;
@@ -19,6 +22,11 @@ export type NewChallenge = {
   end: LatLng;
   distanceMeters?: number;
   estimatedTimeMin?: number;
+
+  /** The user's selected difficulty at creation time */
+  difficulty?: 'easy' | 'hard';
+  /** Only the selected difficulty's adjusted duration */
+  adjustedDurationMin?: number;
 
   // media
   rewardImageUrl?: string;   // Cloudinary URL (optional)
