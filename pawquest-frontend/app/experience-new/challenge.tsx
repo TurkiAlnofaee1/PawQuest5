@@ -1,5 +1,3 @@
-// app/experience-new/challenge.tsx
-
 // ---- Cloudinary env (Unsigned upload) ----
 const CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME!;
 const UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UNSIGNED_PRESET!;
@@ -20,7 +18,7 @@ import {
   Alert,
 } from 'react-native';
 import TopBar from '@/components/TopBar';
-// ❌ Removed ExperienceSegment import
+import ExperienceSegment from '@/components/ExperienceSegment';
 
 import MapView, {
   Marker,
@@ -34,7 +32,7 @@ import * as ImagePicker from 'expo-image-picker';
 
 // ✅ Firestore helper + type
 import { createChallenge, type Category } from '../../src/lib/experience';
-// ✅ ORS helper (shared)
+// ✅ ORS helper (new)
 import { fetchWalkingRoute } from '@/src/lib/ors';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
@@ -69,11 +67,11 @@ async function uploadToCloudinary(uri: string): Promise<string> {
   return json.secure_url as string;
 }
 
-type Difficulty = 'easy' | 'hard';
-
 export default function ChallengeFormScreen() {
   // form state
   const [name, setName] = useState('');
+  const [script, setScript] = useState('');
+  const [duration, setDuration] = useState('');
   const [points, setPoints] = useState('');
   const [rewardName, setRewardName] = useState('');
   const [category, setCategory] = useState<Category>('City');
@@ -95,9 +93,6 @@ export default function ChallengeFormScreen() {
   // pet image (suggested reward image)
   const [petImageUri, setPetImageUri] = useState<string | null>(null);
 
-  // Difficulty selection: start as not selected
-  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
-
   // ───────────────── helpers ─────────────────
   const onMapLongPress = async (e: LongPressEvent) => {
     const coord = e.nativeEvent.coordinate;
@@ -107,10 +102,10 @@ export default function ChallengeFormScreen() {
       setRouteCoords(null);
       setDistanceMeters(undefined);
       setEstimatedTimeMin(undefined);
-      setDifficulty(null); // reset selection on new route
     } else if (!end) {
       setEnd(coord);
       try {
+        // Call walking directions via shared ors.ts
         await getSnappedRoute(start, coord);
       } catch (err: any) {
         console.warn('ORS error:', err?.message ?? err);
@@ -124,27 +119,27 @@ export default function ChallengeFormScreen() {
       setRouteCoords(null);
       setDistanceMeters(undefined);
       setEstimatedTimeMin(undefined);
-      setDifficulty(null);
     }
   };
 
-  // Uses '@/src/lib/ors' to fetch a snapped walking route and update state
+  // ⤵️ Uses '@/src/lib/ors' to fetch a snapped walking route and update state
   async function getSnappedRoute(start: LatLng, end: LatLng) {
-    try {
-      const { feature, distanceMeters, durationSec } = await fetchWalkingRoute(start, end);
-      const coords = feature.geometry.coordinates.map(([lon, lat]: [number, number]) => ({
-        latitude: lat,
-        longitude: lon,
-      }));
-      setRouteCoords(coords);
-      if (distanceMeters != null) setDistanceMeters(Math.round(distanceMeters));
-      if (durationSec != null) setEstimatedTimeMin(Math.max(1, Math.round(durationSec / 60)));
-    } catch (err: any) {
-      console.warn('ORS error:', err?.message ?? err);
-      Alert.alert('Route error', String(err?.message ?? 'Failed to fetch walking route.'));
-      setRouteCoords(null);
-    }
+  try {
+    const { feature, distanceMeters, durationSec } = await fetchWalkingRoute(start, end);
+    const coords = feature.geometry.coordinates.map(([lon, lat]: [number, number]) => ({
+      latitude: lat,
+      longitude: lon,
+    }));
+    setRouteCoords(coords);
+    if (distanceMeters != null) setDistanceMeters(Math.round(distanceMeters));
+    if (durationSec != null) setEstimatedTimeMin(Math.max(1, Math.round(durationSec / 60)));
+  } catch (err: any) {
+    console.warn("ORS error:", err?.message ?? err);
+    Alert.alert("Route error", String(err?.message ?? "Failed to fetch walking route."));
+    setRouteCoords(null);
   }
+}
+
 
   const clearPoints = () => {
     setStart(null);
@@ -152,7 +147,6 @@ export default function ChallengeFormScreen() {
     setRouteCoords(null);
     setDistanceMeters(undefined);
     setEstimatedTimeMin(undefined);
-    setDifficulty(null);
   };
 
   const locateMe = async () => {
@@ -195,26 +189,13 @@ export default function ChallengeFormScreen() {
     }
   };
 
-  // --- Derived durations (from estimatedTimeMin) ---
-  const baseMin = useMemo(() => Math.max(1, Math.round(estimatedTimeMin ?? 10)), [estimatedTimeMin]);
-  const easyMin = useMemo(() => baseMin + 2, [baseMin]);
-  const hardMin = useMemo(() => Math.max(1, Math.ceil(baseMin / 2)), [baseMin]);
-  const adjustedMin = difficulty === 'easy' ? easyMin : difficulty === 'hard' ? hardMin : null;
-
   // ───────────────── submit ─────────────────
   const onSubmit = async () => {
     if (saving) return;
 
-    if (!name.trim() || !start || !end) {
-      Alert.alert('Missing info', 'Please enter a name and pick Start & End on the map.');
-      return;
-    }
-    if (!difficulty) {
-      Alert.alert('Pick difficulty', 'Please choose Easy or Hard.');
-      return;
-    }
-    if (adjustedMin == null) {
-      Alert.alert('Route missing', 'Please generate a route to compute duration.');
+    // stricter validation
+    if (!name.trim() || !script.trim() || !duration || !points || !rewardName.trim() || !start || !end) {
+      Alert.alert('Missing info', 'Please fill all fields and pick Start & End on the map.');
       return;
     }
 
@@ -230,32 +211,31 @@ export default function ChallengeFormScreen() {
         }
       }
 
-      // ✅ Save ONLY the chosen difficulty & its adjusted duration
       await createChallenge({
         name: name.trim(),
         category,
+        script: script.trim(),
         pointsReward: Number(points) || 0,
-        durationMinutes: baseMin,          // keep base route estimate
+        durationMinutes: Number(duration) || 0,
         suggestedReward: rewardName.trim() || '',
         createdBy: 'demo',
         start,
         end,
         distanceMeters,
-        estimatedTimeMin: baseMin,
-        difficulty,                        // 'easy' | 'hard'
-        adjustedDurationMin: adjustedMin,  // only the chosen value
+        estimatedTimeMin,
         rewardImageUrl,
       });
 
       Alert.alert('Success', 'Challenge saved!');
       // reset
       setName('');
+      setScript('');
+      setDuration('');
       setPoints('');
       setRewardName('');
       setCategory('City');
       clearPoints();
       setPetImageUri(null);
-      setDifficulty(null);
     } catch (e: any) {
       Alert.alert('Failed to save', String(e?.message ?? e));
     } finally {
@@ -267,16 +247,18 @@ export default function ChallengeFormScreen() {
   return (
     <View style={styles.root}>
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
-      <TopBar title="Create a Challenge +" backTo="/(tabs)/settings" />
+      <TopBar title="Create an experience  +" backTo="/(tabs)/settings" />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ExperienceSegment current="challenge" />
+
         <Text style={styles.formTitle}>Add Challenge</Text>
 
         {/* Name */}
         <Text style={styles.label}>Name</Text>
         <TextInput
           style={[styles.input, styles.elevated]}
-          placeholder="Example: The Ride"
+          placeholder="Example: The ride"
           placeholderTextColor="#6A6A6A"
           value={name}
           onChangeText={setName}
@@ -337,7 +319,7 @@ export default function ChallengeFormScreen() {
         </View>
 
         {/* Category chips */}
-        <Text style={[styles.label, { marginTop: 8 }]}>Challenge Category</Text>
+        <Text style={[styles.label, { marginTop: 8 }]}>Story Category</Text>
         <View style={styles.chipsRow}>
           {(['City', 'Mountain', 'Desert', 'Sea'] as const).map((t) => {
             const selected = category === t;
@@ -358,44 +340,29 @@ export default function ChallengeFormScreen() {
           })}
         </View>
 
-        {/* Difficulty */}
-        <Text style={[styles.label, { marginTop: 10 }]}>Difficulty</Text>
-        <View style={styles.diffRow}>
-          <TouchableOpacity
-            style={[
-              styles.diffBox,
-              difficulty === 'easy' && styles.diffBoxActive,
-            ]}
-            onPress={() => setDifficulty('easy')}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.diffTitle}>Easy</Text>
-            {/* Show number ONLY when selected */}
-            {difficulty === 'easy' && adjustedMin != null ? (
-              <Text style={styles.diffTime}>{adjustedMin} min</Text>
-            ) : null}
-            <Text style={styles.diffHint}>Base + 2 minutes</Text>
-          </TouchableOpacity>
+        {/* Script / duration / points */}
+        <Text style={styles.label}>Story Script</Text>
+        <TextInput
+          style={[styles.textArea, styles.elevated]}
+          placeholder="Add the story"
+          placeholderTextColor="#6A6A6A"
+          value={script}
+          onChangeText={setScript}
+          multiline
+        />
 
-          <TouchableOpacity
-            style={[
-              styles.diffBox,
-              difficulty === 'hard' && styles.diffBoxActive,
-            ]}
-            onPress={() => setDifficulty('hard')}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.diffTitle}>Hard</Text>
-            {/* Show number ONLY when selected */}
-            {difficulty === 'hard' && adjustedMin != null ? (
-              <Text style={styles.diffTime}>{adjustedMin} min</Text>
-            ) : null}
-            <Text style={styles.diffHint}>~Half the base time</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Points + reward */}
         <View style={styles.row}>
+          <View style={styles.col}>
+            <Text style={styles.label}>Duration (mins)</Text>
+            <TextInput
+              style={[styles.input, styles.elevated]}
+              placeholder="30"
+              placeholderTextColor="#6A6A6A"
+              keyboardType="numeric"
+              value={duration}
+              onChangeText={setDuration}
+            />
+          </View>
           <View style={styles.col}>
             <Text style={styles.label}>Points Reward</Text>
             <TextInput
@@ -407,23 +374,22 @@ export default function ChallengeFormScreen() {
               onChangeText={setPoints}
             />
           </View>
-          <View style={styles.col}>
-            <Text style={styles.label}>Suggested Reward (pet)</Text>
-            <View style={styles.petRow}>
-              <TextInput
-                style={[styles.input, styles.elevated, { flex: 1 }]}
-                placeholder="e.g., Golden Dragon"
-                placeholderTextColor="#6A6A6A"
-                value={rewardName}
-                onChangeText={setRewardName}
-              />
-              <TouchableOpacity style={styles.pickBtn} onPress={pickPetPhoto}>
-                <Text style={styles.pickBtnText}>Pick photo</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
         </View>
 
+        {/* Suggested reward + photo */}
+        <Text style={styles.label}>Suggested Reward (pet)</Text>
+        <View style={styles.petRow}>
+          <TextInput
+            style={[styles.input, styles.elevated, { flex: 1 }]}
+            placeholder="e.g., Golden Dragon"
+            placeholderTextColor="#6A6A6A"
+            value={rewardName}
+            onChangeText={setRewardName}
+          />
+          <TouchableOpacity style={styles.pickBtn} onPress={pickPetPhoto}>
+            <Text style={styles.pickBtnText}>Pick photo</Text>
+          </TouchableOpacity>
+        </View>
         {petImageUri && <Image source={{ uri: petImageUri }} style={styles.petPreview} />}
 
         <TouchableOpacity
@@ -457,17 +423,17 @@ const styles = StyleSheet.create({
   helperText: { marginHorizontal: 10, marginTop: -2, marginBottom: 8, color: '#2c3029', opacity: 0.8 },
 
   input: { backgroundColor: 'rgba(203,238,170,0.85)', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 12 },
+  textArea: {
+    backgroundColor: 'rgba(203,238,170,0.85)',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 110,
+    textAlignVertical: 'top',
+  },
 
   row: { flexDirection: 'row', gap: 12, marginTop: 6 },
   col: { flex: 1 },
-
-  // Difficulty boxes
-  diffRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
-  diffBox: { flex: 1, borderRadius: 14, padding: 14, borderWidth: 2, borderColor: '#00000022', backgroundColor: 'rgba(203,238,170,0.65)' },
-  diffBoxActive: { borderColor: '#0B3B54', backgroundColor: 'rgba(203,238,170,0.9)' },
-  diffTitle: { fontSize: 15, fontWeight: '800', color: '#0B3B54' },
-  diffTime: { fontSize: 22, fontWeight: '900', marginTop: 6, color: '#0B3B54' },
-  diffHint: { fontSize: 12, marginTop: 2, color: '#0B3B54' },
 
   mapWrap: { borderRadius: 16, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.08)' },
   map: { width: '100%', height: 260 },
