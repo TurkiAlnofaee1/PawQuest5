@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  ImageBackground,
   Platform,
   Pressable,
   SafeAreaView,
@@ -21,6 +22,7 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { db } from "@/src/lib/firebase";
 import { collection, getDocs, QueryDocumentSnapshot } from "firebase/firestore";
+const headerBgImage = require("../../assets/images/ImageBackground.jpg");
 
 // ───────────────── types ─────────────────
 type ChallengeStats = {
@@ -45,6 +47,16 @@ type ChallengeDoc = {
   stats?: ChallengeStats;
   info?: Record<string, any>;
   metrics?: Record<string, any>;
+  variants?: Record<string, any>;
+};
+
+type ChallengeVariant = {
+  xp?: number;
+  distanceMeters?: number;
+  estimatedTimeMin?: number;
+  calories?: number;
+  steps?: number;
+  petImageUrl?: string | null;
 };
 
 type Pin = {
@@ -60,6 +72,7 @@ type Pin = {
   ratingCount?: number;
   petImageUrl?: string;
   xp?: number;
+  variants?: { easy?: ChallengeVariant; hard?: ChallengeVariant };
 };
 
 // ───────────────── constants ─────────────────
@@ -118,6 +131,23 @@ const pickNumber = (obj: any, key: string): number | undefined => {
   );
 };
 
+// theme: convert hex color like #RRGGBB to rgba with alpha
+function hexToRgba(hex: string, alpha = 0.82): string {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((hex || '').trim());
+  if (!m) return 'rgba(255,255,255,0.94)';
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function themedCardColor(map: Record<string, string>, categoryId?: string): string {
+  if (!categoryId) return 'rgba(255,255,255,0.94)';
+  const key = categoryId.toLowerCase();
+  const col = map[key];
+  return typeof col === 'string' ? hexToRgba(col, 0.82) : 'rgba(255,255,255,0.82)';
+}
+
 // walk pace used for fallback: ~12 min per km (≈ 5 km/h)
 const WALK_MIN_PER_KM = 12;
 
@@ -170,9 +200,11 @@ export default function Explore() {
   const [loading, setLoading] = useState(true);
   const [pins, setPins] = useState<Pin[]>([]);
   const [selected, setSelected] = useState<Pin | null>(null);
+  const [variantKey, setVariantKey] = useState<'easy' | 'hard'>('easy');
   const [userLoc, setUserLoc] = useState<LocationTypes.LocationObject | null>(null);
   const [distanceToSelected, setDistanceToSelected] = useState<number | null>(null);
   const [hasLocationPerm, setHasLocationPerm] = useState<boolean>(false);
+  const [categoryColors, setCategoryColors] = useState<Record<string, string>>({});
 
   // Permissions + live location
   useEffect(() => {
@@ -230,20 +262,37 @@ export default function Explore() {
         }
 
         if (typeof lat === "number" && typeof lng === "number") {
-          // prefer variants.easy.pet image for map pins
-          const easyVar: any = d?.variants?.easy ?? {};
-          const easyPet: any = easyVar?.pet ?? {};
-          const imgs: string[] | undefined = Array.isArray(easyVar?.petImages)
-            ? easyVar.petImages
-            : Array.isArray(easyPet?.images)
-            ? easyPet.images
-            : undefined;
-          const easyImageUrl =
-            (Array.isArray(imgs) && imgs.length > 0 && typeof imgs[0] === 'string')
-              ? imgs[0]
-              : (typeof easyVar?.petImageUrl === 'string'
-                  ? easyVar.petImageUrl
-                  : (typeof easyPet?.imageUrl === 'string' ? easyPet.imageUrl : undefined));
+          // Build variants
+          const vEasyRaw: any = (d as any)?.variants?.easy ?? {};
+          const vHardRaw: any = (d as any)?.variants?.hard ?? {};
+          const easy: ChallengeVariant | undefined = vEasyRaw && Object.keys(vEasyRaw).length ? {
+            xp: toNum(vEasyRaw?.xp),
+            distanceMeters: toNum(vEasyRaw?.distanceMeters),
+            estimatedTimeMin: toNum(vEasyRaw?.estimatedTimeMin),
+            calories: toNum(vEasyRaw?.calories),
+            steps: toNum(vEasyRaw?.steps),
+            petImageUrl: (() => {
+              // Prefer explicit easy.pet.imageUrl, then images[0], then easy.petImageUrl, then legacy doc.petImageUrl
+              const fromPet = typeof vEasyRaw?.pet?.imageUrl === 'string' ? vEasyRaw.pet.imageUrl : null;
+              const imgs = Array.isArray(vEasyRaw?.pet?.images) ? vEasyRaw.pet.images : undefined;
+              const fromImages = Array.isArray(imgs) && typeof imgs[0] === 'string' ? imgs[0] : null;
+              const fromEasy = typeof vEasyRaw?.petImageUrl === 'string' ? vEasyRaw.petImageUrl : null;
+              return fromPet ?? fromImages ?? fromEasy ?? (typeof d.petImageUrl === 'string' ? d.petImageUrl : null);
+            })(),
+          } : undefined;
+          const hard: ChallengeVariant | undefined = vHardRaw && Object.keys(vHardRaw).length ? {
+            xp: toNum(vHardRaw?.xp),
+            distanceMeters: toNum(vHardRaw?.distanceMeters),
+            estimatedTimeMin: toNum(vHardRaw?.estimatedTimeMin),
+            calories: toNum(vHardRaw?.calories),
+            steps: toNum(vHardRaw?.steps),
+            petImageUrl:
+              typeof vHardRaw?.petImageUrl === 'string'
+                ? vHardRaw.petImageUrl
+                : (typeof vHardRaw?.pet?.imageUrl === 'string' ? vHardRaw.pet.imageUrl : null),
+          } : undefined;
+          const easyImageUrl = easy?.petImageUrl ?? (typeof d.petImageUrl === 'string' ? d.petImageUrl : undefined);
+
           arr.push({
             id: docSnap.id,
             title: d.title ?? d.stats?.title ?? "Challenge",
@@ -257,11 +306,30 @@ export default function Explore() {
             ratingCount,
             petImageUrl: easyImageUrl ?? d.petImageUrl,
             xp: typeof xp === "number" ? xp : undefined,
+            variants: { easy, hard },
           });
         }
       });
       setPins(arr);
       setLoading(false);
+    })();
+  }, []);
+
+  // Load category theme colors from Firestore: challengeCategories/{id}.color
+  useEffect(() => {
+    (async () => {
+      try {
+        const catSnap = await getDocs(collection(db, "challengeCategories"));
+        const map: Record<string, string> = {};
+        catSnap.forEach((d) => {
+          const id = d.id?.toLowerCase?.() ?? "";
+          const color = (d.data() as any)?.color as string | undefined;
+          if (id && typeof color === "string" && color) map[id] = color;
+        });
+        setCategoryColors(map);
+      } catch {
+        // ignore; fall back to default white card
+      }
     })();
   }, []);
 
@@ -290,8 +358,38 @@ export default function Explore() {
 
   const initialRegion = useMemo(() => DEFAULT_REGION, []);
 
+  // ── NEW: derive variant & card data for the info card ────────────────────────
+  const selectedVariant = useMemo<ChallengeVariant | null>(() => {
+    if (!selected) return null;
+    return selected.variants?.[variantKey] ?? selected.variants?.easy ?? null;
+  }, [selected, variantKey]);
+
+  const cardData = useMemo(() => {
+    if (!selected) return null;
+    const v = selectedVariant;
+    return {
+      // always from the pin
+      title: selected.title,
+      categoryId: selected.categoryId,
+
+      // variant-first fields (fallback to pin-level)
+      estimatedTimeMin: v?.estimatedTimeMin ?? selected.estimatedTimeMin,
+      distanceMeters: v?.distanceMeters ?? selected.distanceMeters,
+      xp: v?.xp ?? selected.xp,
+      calories: v?.calories,
+      steps: v?.steps,
+
+      // image prefers variant
+      petImageUrl: v?.petImageUrl ?? selected.petImageUrl ?? null,
+
+      // ratings stay shared
+      ratingAvg: selected.ratingAvg,
+      ratingCount: selected.ratingCount,
+    };
+  }, [selected, selectedVariant]);
+
   // Helper: navigate to details with robust params (supports both `challengeId` and `id`)
-  const goToDetails = (p: Pin) => {
+  const goToDetails = (p: Pin, difficulty: 'easy' | 'hard' = 'easy') => {
     const id = String(p.id);
     // Send both names to be compatible with either extractor on the details screen
     router.push({
@@ -300,6 +398,7 @@ export default function Explore() {
         challengeId: id,
         id, // some screens use `id`, others `challengeId`
         title: p.title || "Challenge", // optional nicety
+        difficulty,
       },
     });
   };
@@ -307,6 +406,8 @@ export default function Explore() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
+        <Image source={headerBgImage} style={[styles.headerBg, { top: -insets.top }]} resizeMode="cover" />
+        <View style={[styles.headerTint, { top: -insets.top }]} />
         <Text style={styles.h1}>Map</Text>
         <Text style={styles.h2}>
           {loading ? "Loading challenges…" : `Challenges Available: ${pins.length}`}
@@ -343,6 +444,7 @@ export default function Explore() {
                 onPress={() => {
                   markerPressRef.current = true;
                   setSelected(p);
+                  setVariantKey('easy');
                 }}
               />
             ))}
@@ -357,12 +459,18 @@ export default function Explore() {
       </View>
 
       {selected && (
-        <View style={[styles.cardWrap, { bottom: insets.bottom + tabH + 8 }]}>
+        <View
+          style={[
+            styles.cardWrap,
+            { bottom: insets.bottom + tabH + 8 },
+            { backgroundColor: themedCardColor(categoryColors, selected.categoryId) },
+          ]}
+        >
           <View style={styles.cardHandle} />
 
           <View style={styles.cardRow}>
-            {selected.petImageUrl ? (
-              <Image source={{ uri: selected.petImageUrl }} style={styles.avatar} />
+            {cardData?.petImageUrl ? (
+              <Image source={{ uri: cardData.petImageUrl }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback]}>
                 <MaterialCommunityIcons name="map-marker" size={28} color="#2b4d49" />
@@ -371,46 +479,66 @@ export default function Explore() {
 
             <View style={{ flex: 1, marginLeft: 10 }}>
               <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-                <Text style={styles.title}>{selected.title || "Challenge"}</Text>
+                <Text style={styles.title}>{cardData?.title || "Challenge"}</Text>
                 <Ionicons name="checkmark-circle" size={16} color="#3BA3F8" style={{ marginLeft: 6 }} />
               </View>
 
-              {/* EXACT FIELDS */}
+              {/* Variant toggle */}
+              <View style={styles.variantRow}>
+                <Pressable
+                  onPress={() => setVariantKey('easy')}
+                  style={[styles.variantPill, variantKey === 'easy' ? styles.variantActive : styles.variantInactive]}
+                >
+                  <Text style={[styles.variantText, variantKey === 'easy' ? styles.variantTextActive : styles.variantTextInactive]}>Easy</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setVariantKey('hard')}
+                  style={[styles.variantPill, variantKey === 'hard' ? styles.variantActive : styles.variantInactive]}
+                >
+                  <Text style={[styles.variantText, variantKey === 'hard' ? styles.variantTextActive : styles.variantTextInactive]}>Hard</Text>
+                </Pressable>
+              </View>
+
+              {/* VARIANT-DRIVEN FIELDS */}
               <View style={styles.infoGroup}>
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Category:</Text>
                   <Text style={styles.infoValue}>
-                    {typeof selected.categoryId === "string" && selected.categoryId.length
-                      ? `${selected.categoryId.charAt(0).toUpperCase()}${selected.categoryId.slice(1)}`
+                    {typeof cardData?.categoryId === "string" && cardData.categoryId.length
+                      ? `${cardData.categoryId.charAt(0).toUpperCase()}${cardData.categoryId.slice(1)}`
                       : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Estimated Time:</Text>
                   <Text style={styles.infoValue}>
-                    {Number.isFinite(selected.estimatedTimeMin as number)
-                      ? `${selected.estimatedTimeMin} min`
+                    {Number.isFinite(cardData?.estimatedTimeMin as number)
+                      ? `${cardData?.estimatedTimeMin} min`
                       : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Distance:</Text>
                   <Text style={styles.infoValue}>
-                    {Number.isFinite(selected.distanceMeters as number)
-                      ? formatDistance(selected.distanceMeters as number)
+                    {Number.isFinite(cardData?.distanceMeters as number)
+                      ? formatDistance(cardData?.distanceMeters as number)
                       : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Rating:</Text>
                   <Text style={styles.infoValue}>
-                    {typeof selected.ratingAvg === "number" ? selected.ratingAvg.toFixed(1) : "—"}
+                    {typeof cardData?.ratingAvg === "number" ? cardData.ratingAvg.toFixed(1) : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Exp:</Text>
                   <Text style={styles.infoValue}>
-                    {typeof selected.xp === "number" ? `${selected.xp.toLocaleString()} XP` : "—"}
+                    {typeof cardData?.xp === "number" ? `${cardData.xp.toLocaleString()} XP` : "—"}
                   </Text>
                 </View>
               </View>
@@ -423,7 +551,7 @@ export default function Explore() {
                   </Text>
                 </View>
 
-                <Pressable onPress={() => goToDetails(selected)} style={styles.startBtn}>
+                <Pressable onPress={() => goToDetails(selected, variantKey)} style={styles.startBtn}>
                   <Text style={styles.startText}>Start</Text>
                   <Ionicons name="chevron-forward" size={18} color="#0b332f" />
                 </Pressable>
@@ -440,17 +568,20 @@ export default function Explore() {
 const PIN_SIZE = 48;
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#eaf5f3" },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   header: {
-    backgroundColor: "#eaf5f3",
+    // image background rendered inside; keep transparent
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === "ios" ? 12 : 10,
     paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0,0,0,0.05)",
   },
-  h1: { fontSize: 28, fontWeight: "900", color: "#2b4d49" },
-  h2: { marginTop: 2, fontSize: 14, fontWeight: "600", color: "#6b8f8b" },
+  headerBg: { ...StyleSheet.absoluteFillObject },
+  headerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(12,46,22,0.12)' },
+  h1: { fontSize: 28, fontWeight: "900", color: "#FFFFFF" },
+  h2: { marginTop: 2, fontSize: 14, fontWeight: "600", color: "rgba(255,255,255,0.88)" },
   mapWrap: { flex: 1, backgroundColor: "#cfe9e5" },
   loadingOverlay: {
     position: "absolute",
@@ -498,7 +629,7 @@ const styles = StyleSheet.create({
     right: 12,
     borderRadius: 20,
     padding: 12,
-    backgroundColor: "rgba(255,255,255,0.94)",
+    // backgroundColor is set dynamically based on category
     shadowColor: "#000",
     shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 8 },
@@ -520,7 +651,7 @@ const styles = StyleSheet.create({
 
   infoGroup: { marginTop: 2, gap: 6 },
   infoRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  infoLabel: { color: "#6b8f8b", fontSize: 12, fontWeight: "700" },
+  infoLabel: { color: "#000", fontSize: 12, fontWeight: "700" },
   infoValue: { color: "#0b332f", fontSize: 13, fontWeight: "900" },
 
   bottomRow: {
@@ -549,4 +680,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   startText: { fontWeight: "900", color: "#0b332f", fontSize: 15 },
+  // Variant toggle styles
+  variantRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  variantPill: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999 },
+  variantActive: { backgroundColor: '#0B3D1F' },
+  variantInactive: { backgroundColor: '#E5F3E7' },
+  variantText: { fontWeight: '800' },
+  variantTextActive: { color: '#fff' },
+  variantTextInactive: { color: '#0B3D1F' },
 });
