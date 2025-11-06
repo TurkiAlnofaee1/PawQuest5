@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { sendPasswordReset } from '@/src/lib/auth';
@@ -28,11 +29,14 @@ export default function ResetScreen() {
     setLoading(true);
     const res = await sendPasswordReset(email.trim());
     setLoading(false);
-    if (!res.success) {
-      setMessage(res.error || 'Failed to send reset email. Try again in a moment.');
-      return;
+    Alert.alert(
+      'Check your inbox',
+      "If an account exists, you’ll get a reset link.",
+    );
+    if (!res.ok && res.error) {
+      // Optionally surface a small non-blocking note for dev/testing
+      setMessage(res.error);
     }
-    setMessage('If an account exists for that email, a reset link is on the way.');
   };
 
   return (
@@ -58,6 +62,7 @@ export default function ResetScreen() {
             />
 
             {message ? <Text style={styles.message}>{message}</Text> : null}
+            <Text style={styles.hint}>If you signed up with Google or Apple, password reset isn’t available.</Text>
 
             <TouchableOpacity
               style={[styles.button, loading && styles.buttonDisabled]}

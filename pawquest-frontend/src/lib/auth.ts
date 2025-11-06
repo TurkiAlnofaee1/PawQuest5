@@ -6,7 +6,7 @@ import {
   signOut as firebaseSignOut,
   updateProfile,
   User,
-  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
@@ -97,12 +97,18 @@ export async function signOut(): Promise<void> {
   await firebaseSignOut(auth);
 }
 
-export async function sendPasswordReset(email: string): Promise<{ success: boolean; error?: string }> {
+export async function sendPasswordReset(email: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    await firebaseSendPasswordResetEmail(auth, email);
-    return { success: true };
+    // Expo Go cannot reliably open actionCodeSettings links; send bare reset
+    await sendPasswordResetEmail(auth, email);
+    return { ok: true };
   } catch (e: any) {
-    return { success: false, error: mapAuthError(e) };
+    // Log raw code during development for easier diagnosis
+    if (process.env.NODE_ENV === 'development') {
+      // eslint-disable-next-line no-console
+      console.warn('sendPasswordResetEmail error:', e?.code || e?.message || e);
+    }
+    return { ok: false, error: e?.code || 'reset-failed' };
   }
 }
 
