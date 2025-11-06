@@ -47,6 +47,16 @@ type ChallengeDoc = {
   stats?: ChallengeStats;
   info?: Record<string, any>;
   metrics?: Record<string, any>;
+  variants?: Record<string, any>;
+};
+
+type ChallengeVariant = {
+  xp?: number;
+  distanceMeters?: number;
+  estimatedTimeMin?: number;
+  calories?: number;
+  steps?: number;
+  petImageUrl?: string | null;
 };
 
 type Pin = {
@@ -62,6 +72,7 @@ type Pin = {
   ratingCount?: number;
   petImageUrl?: string;
   xp?: number;
+  variants?: { easy?: ChallengeVariant; hard?: ChallengeVariant };
 };
 
 // ───────────────── constants ─────────────────
@@ -189,6 +200,7 @@ export default function Explore() {
   const [loading, setLoading] = useState(true);
   const [pins, setPins] = useState<Pin[]>([]);
   const [selected, setSelected] = useState<Pin | null>(null);
+  const [variantKey, setVariantKey] = useState<'easy' | 'hard'>('easy');
   const [userLoc, setUserLoc] = useState<LocationTypes.LocationObject | null>(null);
   const [distanceToSelected, setDistanceToSelected] = useState<number | null>(null);
   const [hasLocationPerm, setHasLocationPerm] = useState<boolean>(false);
@@ -250,20 +262,37 @@ export default function Explore() {
         }
 
         if (typeof lat === "number" && typeof lng === "number") {
-          // prefer variants.easy.pet image for map pins
-          const easyVar: any = d?.variants?.easy ?? {};
-          const easyPet: any = easyVar?.pet ?? {};
-          const imgs: string[] | undefined = Array.isArray(easyVar?.petImages)
-            ? easyVar.petImages
-            : Array.isArray(easyPet?.images)
-            ? easyPet.images
-            : undefined;
-          const easyImageUrl =
-            (Array.isArray(imgs) && imgs.length > 0 && typeof imgs[0] === 'string')
-              ? imgs[0]
-              : (typeof easyVar?.petImageUrl === 'string'
-                  ? easyVar.petImageUrl
-                  : (typeof easyPet?.imageUrl === 'string' ? easyPet.imageUrl : undefined));
+          // Build variants
+          const vEasyRaw: any = (d as any)?.variants?.easy ?? {};
+          const vHardRaw: any = (d as any)?.variants?.hard ?? {};
+          const easy: ChallengeVariant | undefined = vEasyRaw && Object.keys(vEasyRaw).length ? {
+            xp: toNum(vEasyRaw?.xp),
+            distanceMeters: toNum(vEasyRaw?.distanceMeters),
+            estimatedTimeMin: toNum(vEasyRaw?.estimatedTimeMin),
+            calories: toNum(vEasyRaw?.calories),
+            steps: toNum(vEasyRaw?.steps),
+            petImageUrl: (() => {
+              // Prefer explicit easy.pet.imageUrl, then images[0], then easy.petImageUrl, then legacy doc.petImageUrl
+              const fromPet = typeof vEasyRaw?.pet?.imageUrl === 'string' ? vEasyRaw.pet.imageUrl : null;
+              const imgs = Array.isArray(vEasyRaw?.pet?.images) ? vEasyRaw.pet.images : undefined;
+              const fromImages = Array.isArray(imgs) && typeof imgs[0] === 'string' ? imgs[0] : null;
+              const fromEasy = typeof vEasyRaw?.petImageUrl === 'string' ? vEasyRaw.petImageUrl : null;
+              return fromPet ?? fromImages ?? fromEasy ?? (typeof d.petImageUrl === 'string' ? d.petImageUrl : null);
+            })(),
+          } : undefined;
+          const hard: ChallengeVariant | undefined = vHardRaw && Object.keys(vHardRaw).length ? {
+            xp: toNum(vHardRaw?.xp),
+            distanceMeters: toNum(vHardRaw?.distanceMeters),
+            estimatedTimeMin: toNum(vHardRaw?.estimatedTimeMin),
+            calories: toNum(vHardRaw?.calories),
+            steps: toNum(vHardRaw?.steps),
+            petImageUrl:
+              typeof vHardRaw?.petImageUrl === 'string'
+                ? vHardRaw.petImageUrl
+                : (typeof vHardRaw?.pet?.imageUrl === 'string' ? vHardRaw.pet.imageUrl : null),
+          } : undefined;
+          const easyImageUrl = easy?.petImageUrl ?? (typeof d.petImageUrl === 'string' ? d.petImageUrl : undefined);
+
           arr.push({
             id: docSnap.id,
             title: d.title ?? d.stats?.title ?? "Challenge",
@@ -277,6 +306,7 @@ export default function Explore() {
             ratingCount,
             petImageUrl: easyImageUrl ?? d.petImageUrl,
             xp: typeof xp === "number" ? xp : undefined,
+            variants: { easy, hard },
           });
         }
       });
@@ -328,8 +358,38 @@ export default function Explore() {
 
   const initialRegion = useMemo(() => DEFAULT_REGION, []);
 
+  // ── NEW: derive variant & card data for the info card ────────────────────────
+  const selectedVariant = useMemo<ChallengeVariant | null>(() => {
+    if (!selected) return null;
+    return selected.variants?.[variantKey] ?? selected.variants?.easy ?? null;
+  }, [selected, variantKey]);
+
+  const cardData = useMemo(() => {
+    if (!selected) return null;
+    const v = selectedVariant;
+    return {
+      // always from the pin
+      title: selected.title,
+      categoryId: selected.categoryId,
+
+      // variant-first fields (fallback to pin-level)
+      estimatedTimeMin: v?.estimatedTimeMin ?? selected.estimatedTimeMin,
+      distanceMeters: v?.distanceMeters ?? selected.distanceMeters,
+      xp: v?.xp ?? selected.xp,
+      calories: v?.calories,
+      steps: v?.steps,
+
+      // image prefers variant
+      petImageUrl: v?.petImageUrl ?? selected.petImageUrl ?? null,
+
+      // ratings stay shared
+      ratingAvg: selected.ratingAvg,
+      ratingCount: selected.ratingCount,
+    };
+  }, [selected, selectedVariant]);
+
   // Helper: navigate to details with robust params (supports both `challengeId` and `id`)
-  const goToDetails = (p: Pin) => {
+  const goToDetails = (p: Pin, difficulty: 'easy' | 'hard' = 'easy') => {
     const id = String(p.id);
     // Send both names to be compatible with either extractor on the details screen
     router.push({
@@ -338,6 +398,7 @@ export default function Explore() {
         challengeId: id,
         id, // some screens use `id`, others `challengeId`
         title: p.title || "Challenge", // optional nicety
+        difficulty,
       },
     });
   };
@@ -383,6 +444,7 @@ export default function Explore() {
                 onPress={() => {
                   markerPressRef.current = true;
                   setSelected(p);
+                  setVariantKey('easy');
                 }}
               />
             ))}
@@ -407,8 +469,8 @@ export default function Explore() {
           <View style={styles.cardHandle} />
 
           <View style={styles.cardRow}>
-            {selected.petImageUrl ? (
-              <Image source={{ uri: selected.petImageUrl }} style={styles.avatar} />
+            {cardData?.petImageUrl ? (
+              <Image source={{ uri: cardData.petImageUrl }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback]}>
                 <MaterialCommunityIcons name="map-marker" size={28} color="#2b4d49" />
@@ -417,46 +479,66 @@ export default function Explore() {
 
             <View style={{ flex: 1, marginLeft: 10 }}>
               <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-                <Text style={styles.title}>{selected.title || "Challenge"}</Text>
+                <Text style={styles.title}>{cardData?.title || "Challenge"}</Text>
                 <Ionicons name="checkmark-circle" size={16} color="#3BA3F8" style={{ marginLeft: 6 }} />
               </View>
 
-              {/* EXACT FIELDS */}
+              {/* Variant toggle */}
+              <View style={styles.variantRow}>
+                <Pressable
+                  onPress={() => setVariantKey('easy')}
+                  style={[styles.variantPill, variantKey === 'easy' ? styles.variantActive : styles.variantInactive]}
+                >
+                  <Text style={[styles.variantText, variantKey === 'easy' ? styles.variantTextActive : styles.variantTextInactive]}>Easy</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setVariantKey('hard')}
+                  style={[styles.variantPill, variantKey === 'hard' ? styles.variantActive : styles.variantInactive]}
+                >
+                  <Text style={[styles.variantText, variantKey === 'hard' ? styles.variantTextActive : styles.variantTextInactive]}>Hard</Text>
+                </Pressable>
+              </View>
+
+              {/* VARIANT-DRIVEN FIELDS */}
               <View style={styles.infoGroup}>
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Category:</Text>
                   <Text style={styles.infoValue}>
-                    {typeof selected.categoryId === "string" && selected.categoryId.length
-                      ? `${selected.categoryId.charAt(0).toUpperCase()}${selected.categoryId.slice(1)}`
+                    {typeof cardData?.categoryId === "string" && cardData.categoryId.length
+                      ? `${cardData.categoryId.charAt(0).toUpperCase()}${cardData.categoryId.slice(1)}`
                       : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Estimated Time:</Text>
                   <Text style={styles.infoValue}>
-                    {Number.isFinite(selected.estimatedTimeMin as number)
-                      ? `${selected.estimatedTimeMin} min`
+                    {Number.isFinite(cardData?.estimatedTimeMin as number)
+                      ? `${cardData?.estimatedTimeMin} min`
                       : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Distance:</Text>
                   <Text style={styles.infoValue}>
-                    {Number.isFinite(selected.distanceMeters as number)
-                      ? formatDistance(selected.distanceMeters as number)
+                    {Number.isFinite(cardData?.distanceMeters as number)
+                      ? formatDistance(cardData?.distanceMeters as number)
                       : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Rating:</Text>
                   <Text style={styles.infoValue}>
-                    {typeof selected.ratingAvg === "number" ? selected.ratingAvg.toFixed(1) : "—"}
+                    {typeof cardData?.ratingAvg === "number" ? cardData.ratingAvg.toFixed(1) : "—"}
                   </Text>
                 </View>
+
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Exp:</Text>
                   <Text style={styles.infoValue}>
-                    {typeof selected.xp === "number" ? `${selected.xp.toLocaleString()} XP` : "—"}
+                    {typeof cardData?.xp === "number" ? `${cardData.xp.toLocaleString()} XP` : "—"}
                   </Text>
                 </View>
               </View>
@@ -469,7 +551,7 @@ export default function Explore() {
                   </Text>
                 </View>
 
-                <Pressable onPress={() => goToDetails(selected)} style={styles.startBtn}>
+                <Pressable onPress={() => goToDetails(selected, variantKey)} style={styles.startBtn}>
                   <Text style={styles.startText}>Start</Text>
                   <Ionicons name="chevron-forward" size={18} color="#0b332f" />
                 </Pressable>
@@ -598,5 +680,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   startText: { fontWeight: "900", color: "#0b332f", fontSize: 15 },
+  // Variant toggle styles
+  variantRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  variantPill: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999 },
+  variantActive: { backgroundColor: '#0B3D1F' },
+  variantInactive: { backgroundColor: '#E5F3E7' },
+  variantText: { fontWeight: '800' },
+  variantTextActive: { color: '#fff' },
+  variantTextInactive: { color: '#0B3D1F' },
 });
-
