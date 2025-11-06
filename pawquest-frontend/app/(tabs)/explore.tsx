@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  ImageBackground,
   Platform,
   Pressable,
   SafeAreaView,
@@ -21,6 +22,7 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { db } from "@/src/lib/firebase";
 import { collection, getDocs, QueryDocumentSnapshot } from "firebase/firestore";
+const headerBgImage = require("../../assets/images/ImageBackground.jpg");
 
 // ───────────────── types ─────────────────
 type ChallengeStats = {
@@ -118,6 +120,23 @@ const pickNumber = (obj: any, key: string): number | undefined => {
   );
 };
 
+// theme: convert hex color like #RRGGBB to rgba with alpha
+function hexToRgba(hex: string, alpha = 0.82): string {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((hex || '').trim());
+  if (!m) return 'rgba(255,255,255,0.94)';
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function themedCardColor(map: Record<string, string>, categoryId?: string): string {
+  if (!categoryId) return 'rgba(255,255,255,0.94)';
+  const key = categoryId.toLowerCase();
+  const col = map[key];
+  return typeof col === 'string' ? hexToRgba(col, 0.82) : 'rgba(255,255,255,0.82)';
+}
+
 // walk pace used for fallback: ~12 min per km (≈ 5 km/h)
 const WALK_MIN_PER_KM = 12;
 
@@ -173,6 +192,7 @@ export default function Explore() {
   const [userLoc, setUserLoc] = useState<LocationTypes.LocationObject | null>(null);
   const [distanceToSelected, setDistanceToSelected] = useState<number | null>(null);
   const [hasLocationPerm, setHasLocationPerm] = useState<boolean>(false);
+  const [categoryColors, setCategoryColors] = useState<Record<string, string>>({});
 
   // Permissions + live location
   useEffect(() => {
@@ -265,6 +285,24 @@ export default function Explore() {
     })();
   }, []);
 
+  // Load category theme colors from Firestore: challengeCategories/{id}.color
+  useEffect(() => {
+    (async () => {
+      try {
+        const catSnap = await getDocs(collection(db, "challengeCategories"));
+        const map: Record<string, string> = {};
+        catSnap.forEach((d) => {
+          const id = d.id?.toLowerCase?.() ?? "";
+          const color = (d.data() as any)?.color as string | undefined;
+          if (id && typeof color === "string" && color) map[id] = color;
+        });
+        setCategoryColors(map);
+      } catch {
+        // ignore; fall back to default white card
+      }
+    })();
+  }, []);
+
   // Fit all pins
   useEffect(() => {
     if (!mapRef.current || pins.length === 0) return;
@@ -307,6 +345,8 @@ export default function Explore() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
+        <Image source={headerBgImage} style={[styles.headerBg, { top: -insets.top }]} resizeMode="cover" />
+        <View style={[styles.headerTint, { top: -insets.top }]} />
         <Text style={styles.h1}>Map</Text>
         <Text style={styles.h2}>
           {loading ? "Loading challenges…" : `Challenges Available: ${pins.length}`}
@@ -357,7 +397,13 @@ export default function Explore() {
       </View>
 
       {selected && (
-        <View style={[styles.cardWrap, { bottom: insets.bottom + tabH + 8 }]}>
+        <View
+          style={[
+            styles.cardWrap,
+            { bottom: insets.bottom + tabH + 8 },
+            { backgroundColor: themedCardColor(categoryColors, selected.categoryId) },
+          ]}
+        >
           <View style={styles.cardHandle} />
 
           <View style={styles.cardRow}>
@@ -440,17 +486,20 @@ export default function Explore() {
 const PIN_SIZE = 48;
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#eaf5f3" },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   header: {
-    backgroundColor: "#eaf5f3",
+    // image background rendered inside; keep transparent
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === "ios" ? 12 : 10,
     paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0,0,0,0.05)",
   },
-  h1: { fontSize: 28, fontWeight: "900", color: "#2b4d49" },
-  h2: { marginTop: 2, fontSize: 14, fontWeight: "600", color: "#6b8f8b" },
+  headerBg: { ...StyleSheet.absoluteFillObject },
+  headerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(12,46,22,0.12)' },
+  h1: { fontSize: 28, fontWeight: "900", color: "#FFFFFF" },
+  h2: { marginTop: 2, fontSize: 14, fontWeight: "600", color: "rgba(255,255,255,0.88)" },
   mapWrap: { flex: 1, backgroundColor: "#cfe9e5" },
   loadingOverlay: {
     position: "absolute",
@@ -498,7 +547,7 @@ const styles = StyleSheet.create({
     right: 12,
     borderRadius: 20,
     padding: 12,
-    backgroundColor: "rgba(255,255,255,0.94)",
+    // backgroundColor is set dynamically based on category
     shadowColor: "#000",
     shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 8 },
@@ -520,7 +569,7 @@ const styles = StyleSheet.create({
 
   infoGroup: { marginTop: 2, gap: 6 },
   infoRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  infoLabel: { color: "#6b8f8b", fontSize: 12, fontWeight: "700" },
+  infoLabel: { color: "#000", fontSize: 12, fontWeight: "700" },
   infoValue: { color: "#0b332f", fontSize: 13, fontWeight: "900" },
 
   bottomRow: {
@@ -550,3 +599,4 @@ const styles = StyleSheet.create({
   },
   startText: { fontWeight: "900", color: "#0b332f", fontSize: 15 },
 });
+
