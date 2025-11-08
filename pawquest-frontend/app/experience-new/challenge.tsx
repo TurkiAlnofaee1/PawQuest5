@@ -20,8 +20,7 @@ import {
   Alert,
 } from 'react-native';
 import TopBar from '@/components/TopBar';
-// ❌ Removed ExperienceSegment import
-
+import ExperienceSegment from '@/components/ExperienceSegment';
 import MapView, {
   Marker,
   Polyline,
@@ -270,6 +269,7 @@ export default function ChallengeFormScreen() {
       <TopBar title="Create a Challenge +" backTo="/(tabs)/settings" />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ExperienceSegment current="challenge" />
         <Text style={styles.formTitle}>Add Challenge</Text>
 
         {/* Name */}
