@@ -205,7 +205,7 @@ export default function MapScreen() {
   const navigatingRef = useRef<boolean>(false);
 
   // Pre-start (show route from YOU to Start before start)
-  const startPromptShownRef = useRef(false);
+  const [showStartPrompt, setShowStartPrompt] = useState(false);
   const [preStartRouteCoords, setPreStartRouteCoords] = useState<LatLng[]>([]);
   const preStartAbortRef = useRef<AbortController | null>(null);
   const preStartLastOriginRef = useRef<LatLng | null>(null);
@@ -232,7 +232,7 @@ export default function MapScreen() {
   const audioRef = useRef<AudioBarHandle>(null);
 
   useEffect(() => {
-    startPromptShownRef.current = false;
+    setShowStartPrompt(false);
   }, [challengeId]);
 
   useEffect(() => {
@@ -467,11 +467,17 @@ export default function MapScreen() {
 
   // nudge to go to start
   useEffect(() => {
-    if (!challengeStarted && !nearStart && startPoint && !startPromptShownRef.current && canStartChallenge) {
-      Alert.alert("Head to the start point", "Go to the start point to start the challenge.");
-      startPromptShownRef.current = true;
+    if (challengeStarted) {
+      setShowStartPrompt(false);
+      return;
     }
-  }, [challengeStarted, nearStart, startPoint, canStartChallenge]);
+
+    if (startPoint && canStartChallenge) {
+      setShowStartPrompt(true);
+    } else {
+      setShowStartPrompt(false);
+    }
+  }, [challengeStarted, startPoint, canStartChallenge]);
 
   // reset route UI if stop
   useEffect(() => {
@@ -610,6 +616,18 @@ export default function MapScreen() {
     fetchPreStartRouteSafe,
   ]);
 
+  const handleStartPromptPress = useCallback(() => {
+    if (challengeStarted || !userLocation || !startPoint) return;
+    fetchPreStartRouteSafe(userLocation, startPoint);
+  }, [
+    challengeStarted,
+    userLocation?.latitude,
+    userLocation?.longitude,
+    startPoint?.latitude,
+    startPoint?.longitude,
+    fetchPreStartRouteSafe,
+  ]);
+
   // smart fetch (throttle + cancel + cache)
   const fetchRouteSafe = async (origin: LatLng, destination: LatLng) => {
     const now = Date.now();
@@ -738,10 +756,15 @@ export default function MapScreen() {
         )}
         {/* Route after start only */}
         {challengeStarted && doneSeg.length > 1 && (
-          <Polyline coordinates={doneSeg} strokeWidth={6} strokeColor="#9AA3AF" />
+          <Polyline
+            coordinates={doneSeg}
+            strokeWidth={6}
+            strokeColor="rgba(47, 128, 237, 0.3)"
+            lineCap="round"
+          />
         )}
         {challengeStarted && todoSeg.length > 1 && (
-          <Polyline coordinates={todoSeg} strokeWidth={6} strokeColor="#2F80ED" />
+          <Polyline coordinates={todoSeg} strokeWidth={6} strokeColor="#2F80ED" lineCap="round" />
         )}
 
         <Marker coordinate={startPoint} title="Start">
@@ -761,6 +784,24 @@ export default function MapScreen() {
           </View>
         </Marker>
       </MapView>
+
+      {showStartPrompt && !challengeStarted && canStartChallenge && (
+        <TouchableOpacity
+          activeOpacity={0.9}
+          style={styles.startPromptCard}
+          onPress={handleStartPromptPress}
+        >
+          <Text style={styles.startPromptTitle}>Head to the start point</Text>
+          <Text style={styles.startPromptMessage}>
+            {nearStart
+              ? "You're in range. Tap Start when you're ready."
+              : "Follow the blue line to reach the starting flag."}
+          </Text>
+          <Text style={styles.startPromptCta}>
+            {nearStart ? "Tap Start below to begin." : "Tap to refresh directions."}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* HUD: active vs. complete */}
       {challengeStarted && (
@@ -891,4 +932,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
   },
   btnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  startPromptCard: {
+    position: "absolute",
+    top: 60,
+    left: 20,
+    right: 20,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: "rgba(15, 23, 42, 0.95)",
+    borderWidth: 1,
+    borderColor: "#3B82F6",
+    shadowColor: "#000",
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    zIndex: 50,
+  },
+  startPromptTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  startPromptMessage: { color: "#E5E7EB", fontSize: 14, marginTop: 6 },
+  startPromptCta: { color: "#93C5FD", fontSize: 13, marginTop: 10, fontWeight: "600" },
 });
