@@ -10,6 +10,8 @@ import {
   StyleSheet,
   Text,
   View,
+  Animated,
+  PanResponder,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { Region } from "react-native-maps";
@@ -131,33 +133,68 @@ const pickNumber = (obj: any, key: string): number | undefined => {
   );
 };
 
-// theme: convert hex color like #RRGGBB to rgba with alpha
+// ───────────────── category helpers (NEW) ─────────────────
+const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
+  city: "#3B82F6",
+  mountain: "#10B981",
+  desert: "#F59E0B",
+  sea: "#0EA5E9",
+};
+
+function normalizeCategoryId(v?: any): string {
+  if (!v) return "city";
+  const s = String(v).trim().toLowerCase().replace(/\s+/g, "-");
+  if (s === "mountains") return "mountain";
+  if (s === "ocean") return "sea";
+  return s;
+}
+
+// accept #RGB and #RRGGBB
 function hexToRgba(hex: string, alpha = 0.82): string {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((hex || '').trim());
-  if (!m) return 'rgba(255,255,255,0.94)';
-  const r = parseInt(m[1], 16);
-  const g = parseInt(m[2], 16);
-  const b = parseInt(m[3], 16);
+  let h = (hex || "").trim();
+  if (!h) return "rgba(255,255,255,0.94)";
+  if (h[0] !== "#") h = `#${h}`;
+  if (h.length === 4) {
+    // #RGB -> #RRGGBB
+    h = `#${h[1]}${h[1]}${h[2]}${h[2]}${h[3]}${h[3]}`;
+  }
+  const m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(h);
+  if (!m) return "rgba(255,255,255,0.94)";
+  const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-function themedCardColor(map: Record<string, string>, categoryId?: string): string {
-  if (!categoryId) return 'rgba(255,255,255,0.94)';
-  const key = categoryId.toLowerCase();
-  const col = map[key];
-  return typeof col === 'string' ? hexToRgba(col, 0.82) : 'rgba(255,255,255,0.82)';
+function themedCardColor(map: Record<string, string>, rawCategoryId?: string): string {
+  const id = normalizeCategoryId(rawCategoryId);
+  const fromRemote = map[id];
+  const base = (typeof fromRemote === "string" && fromRemote) ? fromRemote : DEFAULT_CATEGORY_COLORS[id];
+  return base ? hexToRgba(base, 0.82) : "rgba(255,255,255,0.82)";
+}
+
+// Solid color (no fade) variant for map pins
+function themedSolidColor(map: Record<string, string>, rawCategoryId?: string): string {
+  const id = normalizeCategoryId(rawCategoryId);
+  const fromRemote = map[id];
+  const base = (typeof fromRemote === "string" && fromRemote) ? fromRemote : DEFAULT_CATEGORY_COLORS[id];
+  return base || "#ffffff";
 }
 
 // walk pace used for fallback: ~12 min per km (≈ 5 km/h)
 const WALK_MIN_PER_KM = 12;
 
 // ───────────────── child component ─────────────────
-function PetMarker({ pin, onPress }: { pin: Pin; onPress: () => void }) {
+function PetMarker({ pin, onPress, bgColor }: { pin: Pin; onPress: () => void; bgColor?: string }) {
   const [imgLoaded, setImgLoaded] = useState(false);
+  const [trackView, setTrackView] = useState(true);
+  useEffect(() => {
+    setTrackView(true);
+    const t = setTimeout(() => setTrackView(false), 300);
+    return () => clearTimeout(t);
+  }, [bgColor]);
   return (
     <Marker
       coordinate={{ latitude: pin.latitude, longitude: pin.longitude }}
-      tracksViewChanges={!imgLoaded}
+      tracksViewChanges={!imgLoaded || trackView}
       anchor={{ x: 0.5, y: 1 }}
       onPress={(e: any) => {
         e?.stopPropagation?.();
@@ -165,7 +202,7 @@ function PetMarker({ pin, onPress }: { pin: Pin; onPress: () => void }) {
       }}
     >
       <View style={styles.petPin} collapsable={false}>
-        <View style={styles.petPinBubble}>
+        <View style={[styles.petPinBubble, { backgroundColor: bgColor || "#ffffff" }]}>
           {pin.petImageUrl ? (
             <Image
               source={{ uri: pin.petImageUrl }}
@@ -182,7 +219,7 @@ function PetMarker({ pin, onPress }: { pin: Pin; onPress: () => void }) {
             />
           )}
         </View>
-        <View style={styles.petPinTail} />
+        <View style={[styles.petPinTail, { borderTopColor: bgColor || "#ffffff" }]} />
       </View>
     </Marker>
   );
@@ -205,6 +242,29 @@ export default function Explore() {
   const [distanceToSelected, setDistanceToSelected] = useState<number | null>(null);
   const [hasLocationPerm, setHasLocationPerm] = useState<boolean>(false);
   const [categoryColors, setCategoryColors] = useState<Record<string, string>>({});
+
+  // Pull-down-to-dismiss gesture for the bottom info card
+  const cardTranslateY = useRef(new Animated.Value(0)).current;
+  const panResponder = useMemo(() =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderMove: (_e, g) => {
+        if (g.dy > 0) cardTranslateY.setValue(g.dy);
+      },
+      onPanResponderRelease: (_e, g) => {
+        const shouldDismiss = g.dy > 80 || g.vy > 0.8;
+        if (shouldDismiss) {
+          Animated.timing(cardTranslateY, { toValue: 220, duration: 180, useNativeDriver: true }).start(() => {
+            setSelected(null);
+            cardTranslateY.setValue(0);
+          });
+        } else {
+          Animated.spring(cardTranslateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        }
+      },
+    }),
+  [cardTranslateY, setSelected]);
 
   // Permissions + live location
   useEffect(() => {
@@ -272,7 +332,6 @@ export default function Explore() {
             calories: toNum(vEasyRaw?.calories),
             steps: toNum(vEasyRaw?.steps),
             petImageUrl: (() => {
-              // Prefer explicit easy.pet.imageUrl, then images[0], then easy.petImageUrl, then legacy doc.petImageUrl
               const fromPet = typeof vEasyRaw?.pet?.imageUrl === 'string' ? vEasyRaw.pet.imageUrl : null;
               const imgs = Array.isArray(vEasyRaw?.pet?.images) ? vEasyRaw.pet.images : undefined;
               const fromImages = Array.isArray(imgs) && typeof imgs[0] === 'string' ? imgs[0] : null;
@@ -296,7 +355,7 @@ export default function Explore() {
           arr.push({
             id: docSnap.id,
             title: d.title ?? d.stats?.title ?? "Challenge",
-            categoryId: d.categoryId?.toLowerCase?.() ?? "city",
+            categoryId: normalizeCategoryId(d.categoryId), // <— normalized
             district: d.district,
             latitude: lat,
             longitude: lng,
@@ -322,13 +381,14 @@ export default function Explore() {
         const catSnap = await getDocs(collection(db, "challengeCategories"));
         const map: Record<string, string> = {};
         catSnap.forEach((d) => {
-          const id = d.id?.toLowerCase?.() ?? "";
-          const color = (d.data() as any)?.color as string | undefined;
-          if (id && typeof color === "string" && color) map[id] = color;
+          const id = normalizeCategoryId(d.id);
+          const raw = (d.data() as any)?.color as string | undefined;
+          const valid = typeof raw === "string" && /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(raw.trim());
+          if (id && valid) map[id] = raw.trim();
         });
         setCategoryColors(map);
       } catch {
-        // ignore; fall back to default white card
+        // ignore; fall back to defaults
       }
     })();
   }, []);
@@ -391,13 +451,12 @@ export default function Explore() {
   // Helper: navigate to details with robust params (supports both `challengeId` and `id`)
   const goToDetails = (p: Pin, difficulty: 'easy' | 'hard' = 'easy') => {
     const id = String(p.id);
-    // Send both names to be compatible with either extractor on the details screen
     router.push({
       pathname: "/ChallengesPages/ChallengeDetails",
       params: {
         challengeId: id,
-        id, // some screens use `id`, others `challengeId`
-        title: p.title || "Challenge", // optional nicety
+        id,
+        title: p.title || "Challenge",
         difficulty,
       },
     });
@@ -437,17 +496,22 @@ export default function Explore() {
           }}
         >
           {!loading &&
-            pins.map((p) => (
-              <PetMarker
-                key={p.id}
-                pin={p}
-                onPress={() => {
-                  markerPressRef.current = true;
-                  setSelected(p);
-                  setVariantKey('easy');
-                }}
-              />
-            ))}
+            pins.map((p) => {
+              const base = themedSolidColor(categoryColors, p.categoryId);
+              const pinBg = hexToRgba(base, 0.7); // slightly translucent for softer look
+              return (
+                <PetMarker
+                  key={`${p.id}-${pinBg}`}
+                  pin={p}
+                  bgColor={pinBg}
+                  onPress={() => {
+                    markerPressRef.current = true;
+                    setSelected(p);
+                    setVariantKey('easy');
+                  }}
+                />
+              );
+            })}
         </MapView>
 
         {loading && (
@@ -459,12 +523,14 @@ export default function Explore() {
       </View>
 
       {selected && (
-        <View
+        <Animated.View
           style={[
             styles.cardWrap,
             { bottom: insets.bottom + tabH + 8 },
             { backgroundColor: themedCardColor(categoryColors, selected.categoryId) },
+            { transform: [{ translateY: cardTranslateY }] },
           ]}
+          {...panResponder.panHandlers}
         >
           <View style={styles.cardHandle} />
 
@@ -558,8 +624,10 @@ export default function Explore() {
               </View>
             </View>
           </View>
-        </View>
+        </Animated.View>
       )}
+
+      {null}
     </SafeAreaView>
   );
 }
@@ -688,4 +756,5 @@ const styles = StyleSheet.create({
   variantText: { fontWeight: '800' },
   variantTextActive: { color: '#fff' },
   variantTextInactive: { color: '#0B3D1F' },
+  
 });
