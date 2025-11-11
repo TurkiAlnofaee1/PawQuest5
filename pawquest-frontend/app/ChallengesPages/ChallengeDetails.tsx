@@ -365,7 +365,7 @@ export default function ChallengeDetails() {
   const startLabel = !locksReady
     ? "Loading…"
     : challengeLocked || currentVariantLocked
-    ? "Locked"
+    ? "Completed"
     : "Start Challenge";
 
   useEffect(() => {

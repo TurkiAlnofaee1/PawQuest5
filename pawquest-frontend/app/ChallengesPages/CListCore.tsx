@@ -337,7 +337,7 @@ export default function CListCore({ category, headerTitle, onSelect, onCountChan
       {item.isLocked ? (
         <View style={styles.lockBadge}>
           <Ionicons name="lock-closed-outline" size={16} color="#111" />
-          <Text style={styles.lockText}>Locked</Text>
+          <Text style={styles.lockText}>Completed</Text>
         </View>
       ) : (
         <Ionicons name="chevron-forward" size={20} />
