@@ -767,10 +767,10 @@ export default function MapScreen() {
           <Polyline coordinates={todoSeg} strokeWidth={6} strokeColor="#2F80ED" lineCap="round" />
         )}
 
-        <Marker coordinate={startPoint} title="Start">
+        <Marker coordinate={startPoint} title="Start" zIndex={2000}>
           <Image source={require("../../assets/images/start-flag.png")} style={styles.icon} />
         </Marker>
-        <Marker coordinate={endPoint} title="Goal">
+        <Marker coordinate={endPoint} title="Goal" zIndex={2000}>
           <Image source={require("../../assets/images/End_Point.png")} style={styles.icon} />
         </Marker>
 
@@ -899,7 +899,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   info: { color: "#fff", marginTop: 8 },
 
-  icon: { width: 36, height: 36, resizeMode: "contain" },
+  icon: { width: 52, height: 52, resizeMode: "contain" },
 
   pulseCircle: {
     position: "absolute",
