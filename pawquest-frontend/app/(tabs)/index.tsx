@@ -608,7 +608,7 @@ const Home: React.FC = () => {
               : 'A fellow adventurer';
           activeGreetings.push({
             id: `greeting:${docSnap.id}`,
-            title: `${senderName} sent you a greeting`,
+            title: `${senderName} liked your profile!`,
             type: 'greeting',
             timestamp: createdAt,
             subtitle: new Date(createdAt).toLocaleString(),
@@ -845,7 +845,7 @@ const Home: React.FC = () => {
                     <Text style={styles.notificationMeta}>
                       {item.type === 'challenge'
                         ? `${item.category ? `${item.category.toUpperCase()} \u2022 ` : ''}${new Date(item.timestamp).toLocaleString()}`
-                        : `Greeting \u2022 ${new Date(item.timestamp).toLocaleString()}`}
+                        : `Like \u2022 ${new Date(item.timestamp).toLocaleString()}`}
                     </Text>
                   </TouchableOpacity>
                 ))}

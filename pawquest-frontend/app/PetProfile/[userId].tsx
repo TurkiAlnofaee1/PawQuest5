@@ -17,7 +17,7 @@ import { collection, doc, onSnapshot, serverTimestamp, setDoc, Unsubscribe } fro
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { db } from '@/src/lib/firebase';
-import { PET_XP_PER_LEVEL } from '@/src/lib/playerProgress';
+import { PET_XP_PER_LEVEL, calculateLevel } from '@/src/lib/playerProgress';
 import { useAuth } from '@/src/hooks/useAuth';
 
 type UserDoc = {
@@ -29,6 +29,8 @@ type UserDoc = {
   equippedPetId?: string | null;
   completedChallenges?: number | string[] | null;
   favoritePetBadge?: string | null;
+  level?: number | null;
+  xp?: number | null;
 };
 
 type PetDoc = {
@@ -67,8 +69,9 @@ export default function PetProfileScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [challengeRunsCount, setChallengeRunsCount] = useState<number | null>(null);
   const [modalCopy, setModalCopy] = useState<{ title: string; message: string } | null>(null);
-  const [sendingGreeting, setSendingGreeting] = useState(false);
-  const [hasSentGreeting, setHasSentGreeting] = useState(false);
+  const [sendingLike, setSendingLike] = useState(false);
+  const [hasSentLike, setHasSentLike] = useState(false);
+  const [likesCount, setLikesCount] = useState<number | null>(null);
 
   const petScale = useRef(new Animated.Value(0.9)).current;
 
@@ -109,6 +112,8 @@ export default function PetProfileScreen() {
             equippedPetId: data.equippedPetId ?? null,
             completedChallenges: data.completedChallenges ?? null,
             favoritePetBadge: data.favoritePetBadge ?? null,
+            level: numberOrNull(data.level),
+            xp: numberOrNull(data.xp),
           });
           setLoadingUser(false);
           setError(null);
@@ -187,19 +192,33 @@ export default function PetProfileScreen() {
 
   useEffect(() => {
     if (!user?.id || !authUser?.uid || user.id === authUser.uid) {
-      setHasSentGreeting(false);
+      setHasSentLike(false);
       return;
     }
     const greetingDoc = doc(db, 'Users', user.id, 'greetings', authUser.uid);
     const unsub = onSnapshot(
       greetingDoc,
       (snap) => {
-        setHasSentGreeting(snap.exists());
+        setHasSentLike(snap.exists());
       },
-      () => setHasSentGreeting(false),
+      () => setHasSentLike(false),
     );
     return () => unsub();
   }, [user?.id, authUser?.uid]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLikesCount(null);
+      return;
+    }
+    const likesRef = collection(db, 'Users', user.id, 'greetings');
+    const unsub = onSnapshot(
+      likesRef,
+      (snapshot) => setLikesCount(snapshot.size),
+      () => setLikesCount(null),
+    );
+    return () => unsub();
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -259,25 +278,35 @@ export default function PetProfileScreen() {
   }, [pet]);
   const rarityBorderColor = getRarityColor(pet?.rarity);
 
-  const playerName = user?.displayName ?? 'Adventurer';
-  const petName = pet?.name ?? 'Pet';
-  const isOwnProfile = authUser?.uid && user?.id ? authUser.uid === user.id : false;
+  const playerLevelDisplay = useMemo(() => {
+    if (typeof user?.level === 'number' && Number.isFinite(user.level)) {
+      return String(Math.max(0, Math.floor(user.level)));
+    }
+    if (typeof user?.xp === 'number' && Number.isFinite(user.xp)) {
+      return String(Math.max(0, calculateLevel(user.xp)));
+    }
+    return '0';
+  }, [user?.level, user?.xp]);
 
-  const handleGreeting = async () => {
+  const playerName = user?.displayName ?? 'Adventurer';
+  const isOwnProfile = authUser?.uid && user?.id ? authUser.uid === user.id : false;
+  const likesDisplay = typeof likesCount === 'number' ? likesCount : 0;
+
+  const handleLike = async () => {
     if (!user?.id || !authUser?.uid) {
-      setModalCopy({ title: 'Hold on', message: 'You need to be signed in to send a greeting.' });
+      setModalCopy({ title: 'Hold on', message: 'You need to be signed in to send a like.' });
       setModalVisible(true);
       return;
     }
     if (isOwnProfile) {
-      setModalCopy({ title: 'Nice Try!', message: 'You cannot send a greeting to yourself.' });
+      setModalCopy({ title: 'Nice Try!', message: 'You cannot send a like to yourself.' });
       setModalVisible(true);
       return;
     }
-    if (hasSentGreeting) {
+    if (hasSentLike) {
       setModalCopy({
         title: 'Already Sent',
-        message: `You have already greeted ${playerName}. Let them respond before sending another hello!`,
+        message: `You have already liked ${playerName}'s profile. Let them respond before sending another like!`,
       });
       setModalVisible(true);
       return;
@@ -285,7 +314,7 @@ export default function PetProfileScreen() {
 
     const greetingRef = doc(db, 'Users', user.id, 'greetings', authUser.uid);
 
-    setSendingGreeting(true);
+    setSendingLike(true);
     try {
       await setDoc(greetingRef, {
         senderId: authUser.uid,
@@ -295,18 +324,18 @@ export default function PetProfileScreen() {
         seen: false,
       });
       setModalCopy({
-        title: 'Greeting Sent!',
-        message: `You greeted ${playerName}'s ${petName}! They'll see it in their notifications.`,
+        title: 'Like Sent!',
+        message: `You liked ${playerName}'s profile! They'll see it in their notifications.`,
       });
       setModalVisible(true);
     } catch (err: any) {
       setModalCopy({
-        title: 'Could not send greeting',
+        title: 'Could not send like',
         message: err?.message ?? 'Please try again in a moment.',
       });
       setModalVisible(true);
     } finally {
-      setSendingGreeting(false);
+      setSendingLike(false);
     }
   };
 
@@ -346,8 +375,23 @@ export default function PetProfileScreen() {
                   style={styles.avatar}
                 />
                 <View style={styles.profileInfo}>
-                  <Text style={styles.playerName}>{playerName}</Text>
+                  <Text style={styles.playerName} numberOfLines={2} ellipsizeMode="tail">
+                    {playerName}
+                  </Text>
                   {user.city ? <Text style={styles.playerCity}>{user.city}</Text> : null}
+                  <View style={styles.profileMetaRow}>
+                    <View style={styles.profileMetaItem}>
+                      <Ionicons name="stats-chart-outline" size={16} color="#047857" />
+                      <Text style={styles.profileMetaLabel}>Level</Text>
+                      <Text style={styles.profileMetaValue}>{playerLevelDisplay}</Text>
+                    </View>
+                    <View style={styles.profileMetaDivider} />
+                    <View style={styles.profileMetaItem}>
+                      <Ionicons name="heart" size={16} color="#047857" />
+                      <Text style={styles.profileMetaLabel}>Likes</Text>
+                      <Text style={styles.profileMetaValue}>{likesDisplay}</Text>
+                    </View>
+                  </View>
                 </View>
               </View>
 
@@ -396,13 +440,13 @@ export default function PetProfileScreen() {
                     style={[
                       styles.actionButton,
                       styles.greetButton,
-                      (hasSentGreeting || sendingGreeting) && styles.disabledButton,
+                      (hasSentLike || sendingLike) && styles.disabledButton,
                     ]}
-                    onPress={handleGreeting}
-                    disabled={hasSentGreeting || sendingGreeting}
+                    onPress={handleLike}
+                    disabled={hasSentLike || sendingLike}
                   >
-                    <Text style={[styles.actionText, (hasSentGreeting || sendingGreeting) && styles.disabledText]}>
-                      {hasSentGreeting ? 'Greeting Sent' : sendingGreeting ? 'Sending...' : 'Send Greeting'}
+                    <Text style={[styles.actionText, (hasSentLike || sendingLike) && styles.disabledText]}>
+                      {hasSentLike ? 'Like Sent' : sendingLike ? 'Liking...' : 'Send Like'}
                     </Text>
                   </Pressable>
                 </View>
@@ -488,6 +532,19 @@ const styles = StyleSheet.create({
   profileInfo: { marginLeft: 16, flex: 1 },
   playerName: { fontSize: 26, fontWeight: '900', color: '#0B3D1F' },
   playerCity: { fontSize: 14, fontWeight: '600', color: '#14532D', marginTop: 4 },
+  profileMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    backgroundColor: '#FFFFFFAA',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  profileMetaItem: { flexDirection: 'row', alignItems: 'center' },
+  profileMetaDivider: { width: 1, height: 18, backgroundColor: '#A7D3AA', marginHorizontal: 12 },
+  profileMetaLabel: { fontSize: 12, color: '#065F46', fontWeight: '700', marginLeft: 4 },
+  profileMetaValue: { fontSize: 14, fontWeight: '900', color: '#065F46', marginLeft: 4 },
   petCard: {
     marginTop: 24,
     borderWidth: 3,
