@@ -72,6 +72,7 @@ export default function PetProfileScreen() {
   const [sendingLike, setSendingLike] = useState(false);
   const [hasSentLike, setHasSentLike] = useState(false);
   const [likesCount, setLikesCount] = useState<number | null>(null);
+  const [petBadge, setPetBadge] = useState<string | null>(null);
 
   const petScale = useRef(new Animated.Value(0.9)).current;
 
@@ -142,48 +143,103 @@ export default function PetProfileScreen() {
     }
     setLoadingPet(true);
     const unsub = onSnapshot(collection(db, 'Users', user.id, 'pets'), (snap) => {
-      let best: any | null = null;
+      const candidates: any[] = [];
       snap.forEach((docSnap) => {
         const data: any = docSnap.data() ?? {};
-        const xp = typeof data?.xp === 'number' ? data.xp : 0;
+        const xp = typeof data?.xp === 'number' ? Math.max(0, data.xp) : 0;
         const imgs: string[] = Array.isArray(data?.images)
           ? data.images.filter((u: any) => typeof u === 'string' && u.length > 0)
           : [];
-        const evo = Math.floor(xp / PET_XP_PER_LEVEL);
-        const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : 0;
-        const score = stageIdx * 1000000000 + xp; // prioritize stage, then xp
+        const evo = Math.max(0, Math.floor(xp / PET_XP_PER_LEVEL));
+        const stageCountDerived = imgs.length > 0 ? imgs.length : null;
         const stageCount =
-          imgs.length > 0
-            ? imgs.length
-            : typeof data?.stageCount === 'number' && Number.isFinite(data.stageCount)
+          stageCountDerived ??
+          (typeof data?.stageCount === 'number' && Number.isFinite(data.stageCount)
             ? Math.max(0, Math.floor(data.stageCount))
-            : null;
-        if (!best || score > (best._score ?? -1)) {
-          best = {
-            _score: score,
-            id: docSnap.id,
-            name: data?.name ?? data?.petId ?? null,
-            imageUrl: imgs.length > 0 ? imgs[stageIdx] : (data?.imageUrl ?? null),
-            xp,
-            evoLevel: evo,
-            rarity: data?.rarity ?? null,
-            stageCount,
-          };
-        }
-      });
-      if (best) {
-        setPet({
-          id: best.id,
-          name: best.name,
-          imageUrl: best.imageUrl,
-          level: null,
-          rarity: best.rarity,
-          xp: best.xp,
-          evoLevel: best.evoLevel,
-          stageCount: best.stageCount ?? null,
+            : null);
+        const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : Math.max(0, Math.min(evo, (stageCount ?? 1) - 1));
+
+        // Timestamps for tie-breaking: prefer most recently updated when at top stage
+        const ts = (val: any): number => {
+          try {
+            if (!val) return 0;
+            if (typeof val?.toMillis === 'function') return val.toMillis();
+            if (typeof val === 'number' && Number.isFinite(val)) return val;
+            const parsed = Date.parse(String(val));
+            return Number.isFinite(parsed) ? parsed : 0;
+          } catch {
+            return 0;
+          }
+        };
+        const updatedAt = ts((data as any)?.updatedAt);
+        const collectedAt = ts((data as any)?.collectedAt);
+
+        const isMaxForThisPet =
+          (typeof stageCount === 'number' && stageCount > 0 && stageIdx >= stageCount - 1) ||
+          false;
+
+        candidates.push({
+          id: docSnap.id,
+          name: data?.name ?? data?.petId ?? null,
+          imageUrl: imgs.length > 0 ? imgs[stageIdx] : (data?.imageUrl ?? null),
+          xp,
+          evoLevel: evo,
+          rarity: data?.rarity ?? null,
+          stageCount,
+          stageIdx,
+          updatedAt,
+          collectedAt,
+          isMaxForThisPet,
         });
+      });
+
+      if (candidates.length === 0) {
+        setPet(null);
+        setPetBadge(null);
+        setLoadingPet(false);
+        return;
+      }
+
+      // Find highest stage reached among all pets
+      const maxStage = candidates.reduce((m, c) => Math.max(m, c.stageIdx ?? 0), 0);
+      let top = candidates.filter((c) => (c.stageIdx ?? 0) === maxStage);
+
+      // If multiple at same top stage and any are at their max, pick most recently updated
+      let chosen: any = null;
+      let badge: string | null = null;
+      const topMax = top.filter((c) => c.isMaxForThisPet);
+      if (topMax.length > 0) {
+        topMax.sort((a, b) => (b.updatedAt || b.collectedAt || 0) - (a.updatedAt || a.collectedAt || 0));
+        chosen = topMax[0];
+        badge = 'Highest Evolved';
+      } else if (top.length > 1) {
+        // No pet is at its own max stage; break ties by XP, then recency
+        top.sort((a, b) => {
+          if (b.xp !== a.xp) return b.xp - a.xp;
+          return (b.updatedAt || b.collectedAt || 0) - (a.updatedAt || a.collectedAt || 0);
+        });
+        chosen = top[0];
+        badge = 'Highest Evolved';
+      } else {
+        chosen = top[0];
+        badge = 'Highest Evolved';
+      }
+
+      if (chosen) {
+        setPet({
+          id: chosen.id,
+          name: chosen.name,
+          imageUrl: chosen.imageUrl,
+          level: null,
+          rarity: chosen.rarity,
+          xp: chosen.xp,
+          evoLevel: chosen.evoLevel,
+          stageCount: chosen.stageCount ?? null,
+        });
+        setPetBadge(badge);
       } else {
         setPet(null);
+        setPetBadge(null);
       }
       setLoadingPet(false);
     });
@@ -407,11 +463,9 @@ export default function PetProfileScreen() {
                       style={[styles.petImage, { transform: [{ scale: petScale }] }]}
                       resizeMode="contain"
                     />
-                    
-                    
-                    {user.favoritePetBadge ? (
+                    {user.favoritePetBadge || petBadge ? (
                       <View style={styles.badgeChip}>
-                        <Text style={styles.badgeText}>{user.favoritePetBadge}</Text>
+                        <Text style={styles.badgeText}>{user.favoritePetBadge ?? petBadge}</Text>
                       </View>
                     ) : null}
                   </>
