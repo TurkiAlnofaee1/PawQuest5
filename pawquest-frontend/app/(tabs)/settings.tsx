@@ -21,8 +21,10 @@ export default function SettingsScreen() {
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={styles.safeArea}>
-        {/* Title */}
-        <Text style={styles.title}>Settings</Text>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.h1}>Settings</Text>
+        </View>
 
         {/* Cards */}
         <View style={styles.list}>
@@ -32,16 +34,7 @@ export default function SettingsScreen() {
             onPress={() => router.push('/account'as any)}
           >
             <Text style={styles.cardText}>Account</Text>
-            <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.card}
-            activeOpacity={0.8}
-            onPress={() => router.push('/notifications'as any)}
-          >
-            <Text style={styles.cardText}>Notifications</Text>
-            <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
+            <MaterialCommunityIcons name="chevron-right" size={26} color="#FFFFFF" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -50,7 +43,7 @@ export default function SettingsScreen() {
             onPress={() => router.push('/experience-new'as any)}
           >
             <Text style={styles.cardText}>Create an experience  +</Text>
-            <MaterialCommunityIcons name="chevron-right" size={22} color="#2c3029" />
+            <MaterialCommunityIcons name="chevron-right" size={26} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -60,23 +53,22 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, width: '100%', height: '100%' },
-  safeArea: { flex: 1, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 12 : 8 },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-    marginBottom: 16,
-    color: '#111',
-  },
-  list: { gap: 12 },
+  safeArea: { flex: 1, paddingTop: Platform.OS === 'ios' ? 10 : 6 },
+  header: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6 },
+  h1: { fontSize: 32, fontWeight: '900', color: '#FFFFFF' },
+  list: { gap: 14, paddingHorizontal: 12, paddingTop: 8 },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
 
-    backgroundColor: 'rgba(203, 238, 170, 0.95)', // soft leafy green
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    height: 56,
+    backgroundColor: 'rgba(12,46,22,0.28)',
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    height: 68,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
 
     // soft shadow
     ...Platform.select({
@@ -86,8 +78,9 @@ const styles = StyleSheet.create({
     }),
   },
   cardText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#2c3029',
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });
+
