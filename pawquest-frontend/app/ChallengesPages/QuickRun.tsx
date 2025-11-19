@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Platform, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import MapView, { LatLng, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { Audio } from 'expo-av';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { auth } from '@/src/lib/firebase';
 import { beginChallengeSession, endChallengeSessionAndPersist, onChallengeViolation, getCurrentSessionSteps } from '@/src/lib/backgroundTracking';
 import { awardPlayerProgress } from '@/src/lib/playerProgress';
+import { StorySegments, STORY_SEGMENT_COUNT, saveStoryCompletion } from '@/src/lib/stories';
 
 const haversineM = (a: LatLng, b: LatLng) => {
   const R = 6371e3;
@@ -27,8 +29,32 @@ const fmtTime = (sec: number) => {
   return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 };
 
+const QUICK_SEGMENT_DISTANCE_M = 200;
+const QUICK_SEGMENT_THRESHOLDS = Array.from({ length: STORY_SEGMENT_COUNT }, (_, idx) => idx * QUICK_SEGMENT_DISTANCE_M);
+
 export default function QuickRun() {
   const router = useRouter();
+  const { story: storyParamRaw } = useLocalSearchParams<{ story?: string }>();
+
+  const activeStory = useMemo<StorySegments | null>(() => {
+    if (!storyParamRaw || typeof storyParamRaw !== 'string' || storyParamRaw.length === 0) {
+      return null;
+    }
+    try {
+      const decoded = decodeURIComponent(storyParamRaw);
+      const payload = JSON.parse(decoded);
+      if (!payload || !Array.isArray(payload.segmentUrls) || payload.segmentUrls.length === 0) {
+        return null;
+      }
+      return {
+        ...payload,
+        segmentUrls: payload.segmentUrls.slice(0, STORY_SEGMENT_COUNT),
+      } as StorySegments;
+    } catch (error) {
+      console.warn('[QuickRun] invalid story payload', error);
+      return null;
+    }
+  }, [storyParamRaw]);
 
   const [region, setRegion] = useState<any | null>(null);
   const [path, setPath] = useState<LatLng[]>([]);
@@ -38,6 +64,12 @@ export default function QuickRun() {
   const watchRef = useRef<Location.LocationSubscription | null>(null);
   const mapRef = useRef<MapView | null>(null);
   const [tick, setTick] = useState(0);
+  const [storyStatus, setStoryStatus] = useState(
+    activeStory ? 'Loading story…' : 'No story selected',
+  );
+  const storySoundsRef = useRef<Audio.Sound[]>([]);
+  const currentStorySegmentRef = useRef<number | null>(null);
+  const triggeredSegmentsRef = useRef<boolean[]>(Array(STORY_SEGMENT_COUNT).fill(false));
 
   const elapsedSec = useMemo(
     () => (startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0),
@@ -45,6 +77,105 @@ export default function QuickRun() {
   );
   // Display XP: 1 XP per 5 steps from session
   const displayedXp = useMemo(() => Math.max(0, Math.floor(getCurrentSessionSteps() / 5)), [tick]);
+
+  useEffect(() => {
+    setStoryStatus(activeStory ? 'Loading story…' : 'No story selected');
+  }, [activeStory]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStory = async () => {
+      triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+      await stopCurrentStory();
+      await unloadStoryAudio();
+      if (!activeStory || !activeStory.segmentUrls?.length) {
+        setStoryStatus('No story selected');
+        return;
+      }
+      try {
+        const sounds: Audio.Sound[] = [];
+        for (const url of activeStory.segmentUrls.slice(0, STORY_SEGMENT_COUNT)) {
+          const sound = new Audio.Sound();
+          await sound.loadAsync({ uri: url });
+          sounds.push(sound);
+        }
+        if (cancelled) {
+          await Promise.all(
+            sounds.map((sound) =>
+              sound
+                .unloadAsync()
+                .catch(() => {
+                  /* ignore */
+                }),
+            ),
+          );
+          return;
+        }
+        storySoundsRef.current = sounds;
+        currentStorySegmentRef.current = null;
+        setStoryStatus('Ready');
+      } catch (error) {
+        console.warn('[QuickRun] failed to load story audio', error);
+        setStoryStatus('Audio unavailable');
+      }
+    };
+    loadStory();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStory, stopCurrentStory, unloadStoryAudio]);
+
+  useEffect(() => {
+    if (!running || !activeStory || storySoundsRef.current.length === 0) return;
+    QUICK_SEGMENT_THRESHOLDS.forEach((threshold, idx) => {
+      if (distanceM >= threshold && !triggeredSegmentsRef.current[idx]) {
+        void playSegmentAtIndex(idx);
+      }
+    });
+  }, [distanceM, running, activeStory, playSegmentAtIndex]);
+
+  const stopCurrentStory = useCallback(async () => {
+    if (currentStorySegmentRef.current === null) return;
+    try {
+      await storySoundsRef.current[currentStorySegmentRef.current]?.stopAsync();
+    } catch {
+      // ignore stop failures
+    }
+    currentStorySegmentRef.current = null;
+  }, []);
+
+  const unloadStoryAudio = useCallback(async () => {
+    await Promise.all(
+      storySoundsRef.current.map((sound) =>
+        sound
+          .unloadAsync()
+          .catch(() => {
+            /* ignore */
+          }),
+      ),
+    );
+    storySoundsRef.current = [];
+  }, []);
+
+  const playSegmentAtIndex = useCallback(
+    async (idx: number) => {
+      const sound = storySoundsRef.current[idx];
+      if (!sound) return;
+      try {
+        if (currentStorySegmentRef.current !== null && currentStorySegmentRef.current !== idx) {
+          await storySoundsRef.current[currentStorySegmentRef.current]?.stopAsync();
+        }
+        await sound.setPositionAsync(0);
+        await sound.playAsync();
+        currentStorySegmentRef.current = idx;
+        triggeredSegmentsRef.current[idx] = true;
+        setStoryStatus(`Segment ${idx + 1} playing`);
+      } catch (error) {
+        console.warn('[QuickRun] failed to play story segment', error);
+      }
+    },
+    [],
+  );
 
   const startWatch = useCallback(async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -89,25 +220,35 @@ export default function QuickRun() {
     return () => {
       watchRef.current?.remove();
       watchRef.current = null;
+      void stopCurrentStory();
+      void unloadStoryAudio();
     };
-  }, [startWatch]);
+  }, [startWatch, stopCurrentStory, unloadStoryAudio]);
 
   // Overspeed handler: abort without rewards
   useEffect(() => {
     const off = onChallengeViolation(() => {
       if (!running) return;
-      try { watchRef.current?.remove(); } catch {}
+      try {
+        watchRef.current?.remove();
+      } catch {}
       watchRef.current = null;
       setRunning(false);
+      void stopCurrentStory();
+      void unloadStoryAudio();
       Alert.alert(
         'Warning',
         'Using transportation is not allowed.',
-        [ { text: 'I understand', onPress: () => router.replace('/(tabs)') } ],
+        [{ text: 'I understand', onPress: () => router.replace('/(tabs)') }],
         { cancelable: false },
       );
     });
-    return () => { try { off(); } catch {} };
-  }, [running, router]);
+    return () => {
+      try {
+        off();
+      } catch {}
+    };
+  }, [running, router, stopCurrentStory, unloadStoryAudio]);
 
   // Tick every second while running so timer updates smoothly even if user stands still
   useEffect(() => {
@@ -122,9 +263,14 @@ export default function QuickRun() {
     watchRef.current = null;
     setRunning(false);
 
+    await stopCurrentStory();
+    await unloadStoryAudio();
+
     // End background session and persist steps/calories to today; use steps for XP
     let sessionTotals = { steps: 0, calories: 0 };
-    try { sessionTotals = await endChallengeSessionAndPersist(); } catch {}
+    try {
+      sessionTotals = await endChallengeSessionAndPersist();
+    } catch {}
 
     // 1 XP for each 5 steps
     const xp = Math.max(0, Math.floor((sessionTotals.steps ?? 0) / 5));
@@ -136,11 +282,18 @@ export default function QuickRun() {
         // ignore award errors for UX; still show summary
       }
     }
+    if (uid && activeStory) {
+      try {
+        await saveStoryCompletion(uid, activeStory);
+      } catch (error) {
+        console.warn('[QuickRun] failed to save story completion', error);
+      }
+    }
 
     Alert.alert('Great Job!', `You gained ${xp} XP`, [
       { text: 'Back to Home', onPress: () => router.replace('/(tabs)') },
     ]);
-  }, [distanceM, running, router]);
+  }, [activeStory, running, router, stopCurrentStory, unloadStoryAudio]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -174,6 +327,24 @@ export default function QuickRun() {
         </View>
       </View>
 
+      <View style={styles.storyCard}>
+        <Text style={styles.storyLabel}>Story Segments</Text>
+        {activeStory ? (
+          <>
+            <Text style={styles.storyTitle} numberOfLines={1}>
+              {activeStory.title}
+            </Text>
+            <Text style={styles.storyStatus}>{storyStatus}</Text>
+            <Text style={styles.storyHint}>0m · 200m · 400m · 600m · 800m</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.storyStatus}>No story selected</Text>
+            <Text style={styles.storyHint}>Pick a story before starting to hear audio.</Text>
+          </>
+        )}
+      </View>
+
       <Pressable onPress={finish} style={({ pressed }) => [styles.finishBtn, pressed && { opacity: 0.9 }]}>
         <Text style={styles.finishText}>Finish</Text>
       </Pressable>
@@ -201,6 +372,19 @@ const styles = StyleSheet.create({
   statBox: { flex: 1, alignItems: 'center' },
   statLabel: { color: '#0B3D1F', fontWeight: '700' },
   statValue: { color: '#0B3D1F', fontWeight: '900', fontSize: 18, marginTop: 2 },
+
+  storyCard: {
+    marginHorizontal: 14,
+    marginTop: 12,
+    backgroundColor: '#111827',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  storyLabel: { color: '#9CA3AF', fontWeight: '700', fontSize: 12, textTransform: 'uppercase' },
+  storyTitle: { color: '#F9FAFB', fontWeight: '900', fontSize: 16, marginTop: 4 },
+  storyStatus: { color: '#F9FAFB', fontSize: 14, marginTop: 4 },
+  storyHint: { color: '#D1D5DB', fontSize: 12, marginTop: 2 },
 
   finishBtn: {
     backgroundColor: '#22C55E',

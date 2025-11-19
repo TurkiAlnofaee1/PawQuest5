@@ -20,13 +20,7 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-rou
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { auth, db } from "../../src/lib/firebase";
-import {
-  doc,
-  getDoc,
-  collection,
-  getDocs,
-  QueryDocumentSnapshot,
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import {
   ChallengeStats,
   getChallengeRatingStats,
@@ -37,6 +31,12 @@ import {
   isChallengeFullyLocked,
   VariantCompletionFlags,
 } from "../../src/lib/challengeRuns";
+import { describeSegmentsMeta } from "../../src/lib/stories";
+import {
+  loadStoryPickerData,
+  SeasonSection,
+  StoryOption,
+} from "../../src/lib/storyPicker";
 
 /* ------------------------ category backgrounds ------------------------ */
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
@@ -140,15 +140,6 @@ type Variant = {
   hiitType?: string;
 };
 
-type Story = {
-  id: string;
-  title: string;
-  distanceMeters?: number;
-  estimatedTimeMin?: number;
-  calories?: number;
-  hiitType?: string;
-};
-
 type ChallengeDoc = {
   title: string;
   categoryId: string;
@@ -187,9 +178,12 @@ export default function ChallengeDetails() {
   const [userRating, setUserRating] = useState<number | null>(null);
 
   // stories
-  const [stories, setStories] = useState<Story[]>([]);
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
-  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [storiesLoading, setStoriesLoading] = useState(false);
+  const [petStoryOptions, setPetStoryOptions] = useState<StoryOption[]>([]);
+  const [seasonSections, setSeasonSections] = useState<SeasonSection[]>([]);
+  const [flatStoryOptions, setFlatStoryOptions] = useState<StoryOption[]>([]);
+  const [selectedStoryKey, setSelectedStoryKey] = useState<string | null>(null);
   const [variantCompletions, setVariantCompletions] = useState<VariantCompletionFlags>({
     easy: false,
     hard: false,
@@ -201,43 +195,29 @@ export default function ChallengeDetails() {
   const rewardAnim = useRef(new Animated.Value(0)).current;
   const statsAnim = useRef(new Animated.Value(0)).current;
 
-  // fetch challenge + stories
+  // fetch challenge doc
   useEffect(() => {
     let active = true;
     (async () => {
       try {
         if (!normalizedId) return;
-
-        // challenge
         const ref = doc(db, "challenges", normalizedId);
         const snap = await getDoc(ref);
         if (snap.exists() && active) {
           const d = snap.data() as ChallengeDoc;
           setData(d);
           if (d.variants?.hard && !d.variants?.easy) setTab("hard");
-        }
-
-        // optional stories subcollection
-        const sref = collection(db, "challenges", normalizedId, "stories");
-        const ssnap = await getDocs(sref);
-        const list: Story[] = ssnap.docs.map((d: QueryDocumentSnapshot) => {
-          const raw = d.data() as any;
-          return {
-            id: d.id,
-            title: String(raw?.title ?? "Untitled"),
-            distanceMeters: typeof raw?.distanceMeters === "number" ? raw.distanceMeters : undefined,
-            estimatedTimeMin: typeof raw?.estimatedTimeMin === "number" ? raw.estimatedTimeMin : undefined,
-            calories: typeof raw?.calories === "number" ? raw.calories : undefined,
-            hiitType: typeof raw?.hiitType === "string" ? raw.hiitType : undefined,
-          };
-        });
-
-        if (active) {
-          setStories(list);
-          if (list.length > 0) setSelectedStoryId(list[0].id);
+        } else if (active) {
+          setData(null);
         }
       } catch (e) {
-        console.error("Failed to load challenge:", e);
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("Failed to load challenge:", e);
+        }
+        if (active) {
+          setData(null);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -351,6 +331,62 @@ export default function ChallengeDetails() {
     };
   }, [normalizedId, userId]);
 
+  useEffect(() => {
+    let active = true;
+    if (!data || !normalizedId) {
+      setPetStoryOptions([]);
+      setSeasonSections([]);
+      setFlatStoryOptions([]);
+      setSelectedStoryKey(null);
+      setStoriesLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setStoriesLoading(true);
+    (async () => {
+      try {
+        const result = await loadStoryPickerData({
+          challengeDoc: data,
+          challengeId: normalizedId,
+          variantId: tab,
+          userId,
+        });
+        if (!active) return;
+        setPetStoryOptions(result.petStoryOptions);
+        setSeasonSections(result.seasonSections);
+        setFlatStoryOptions(result.flatStoryOptions);
+        setSelectedStoryKey((prev) => {
+          if (
+            prev &&
+            result.flatStoryOptions.some((story) => story.progressKey === prev && !story.locked)
+          ) {
+            return prev;
+          }
+          return result.flatStoryOptions.find((story) => !story.locked)?.progressKey ?? null;
+        });
+      } catch (error) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("[ChallengeDetails] failed to load stories", error);
+        }
+        if (active) {
+          setPetStoryOptions([]);
+          setSeasonSections([]);
+          setFlatStoryOptions([]);
+          setSelectedStoryKey(null);
+        }
+      } finally {
+        if (active) setStoriesLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [data, normalizedId, tab, userId]);
+
   const challengeLocked = useMemo(
     () => isChallengeFullyLocked(variantCompletions),
     [variantCompletions],
@@ -361,7 +397,35 @@ export default function ChallengeDetails() {
     return tab === "hard" ? variantCompletions.hard : variantCompletions.easy;
   }, [challengeLocked, tab, variantCompletions]);
 
-  const startDisabled = !locksReady || currentVariantLocked;
+  const effectiveCategory = (category || data?.categoryId || "city").toString().toLowerCase();
+  const pal = getPalette(effectiveCategory);
+  const bgSource = bgByCategory[effectiveCategory] ?? defaultBg;
+
+  const variant: Variant | undefined = useMemo(() => data?.variants?.[tab], [data, tab]);
+
+  const selectedStory = useMemo(
+    () =>
+      flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ??
+      null,
+    [flatStoryOptions, selectedStoryKey],
+  );
+
+  const storySelectionRequired = flatStoryOptions.length > 0;
+
+  const storyBarText = useMemo(() => {
+    if (storiesLoading) return "Loading stories...";
+    if (!flatStoryOptions.length) return "No stories available yet";
+    if (selectedStory) return `Story: ${selectedStory.title}`;
+    return "Choose a Story";
+  }, [flatStoryOptions.length, selectedStory, storiesLoading]);
+
+  const storySegmentDescription = useMemo(
+    () => describeSegmentsMeta(selectedStory),
+    [selectedStory],
+  );
+
+  const startDisabled =
+    !locksReady || currentVariantLocked || (storySelectionRequired && !selectedStory);
   const startLabel = !locksReady
     ? "Loading…"
     : challengeLocked || currentVariantLocked
@@ -382,15 +446,60 @@ export default function ChallengeDetails() {
     ]);
   }, [locksReady, challengeLocked, router]);
 
-  const effectiveCategory = (category || data?.categoryId || "city").toString().toLowerCase();
-  const pal = getPalette(effectiveCategory);
-  const bgSource = bgByCategory[effectiveCategory] ?? defaultBg;
+  const handleSelectStory = useCallback(
+    (story: StoryOption) => {
+      if (story.locked) {
+        Alert.alert("Locked episode", "Finish the previous episode to unlock this story.");
+        return;
+      }
+      setSelectedStoryKey(story.progressKey);
+      setStoryPickerOpen(false);
+    },
+    [],
+  );
 
-  const variant: Variant | undefined = useMemo(() => data?.variants?.[tab], [data, tab]);
-
-  const selectedStory = useMemo(
-    () => stories.find((s) => s.id === selectedStoryId) || null,
-    [stories, selectedStoryId]
+  const renderStoryOption = useCallback(
+    (story: StoryOption) => {
+      const active = selectedStoryKey === story.progressKey;
+      const distanceLabel = story.distanceMeters ? mToKm(story.distanceMeters) : "—";
+      const timeValue =
+        typeof story.durationMinutes === "number"
+          ? story.durationMinutes
+          : story.estimatedTimeMin;
+      const timeLabel = typeof timeValue === "number" ? `${timeValue} min` : "--";
+      return (
+        <Pressable
+          key={story.progressKey}
+          style={[
+            styles.modalItem,
+            active && styles.modalItemActive,
+            story.locked && styles.modalItemLocked,
+          ]}
+          onPress={() => handleSelectStory(story)}
+        >
+          <View style={styles.storyRowHeader}>
+            <Text
+              style={[
+                styles.modalItemText,
+                active && { color: pal.strong },
+                story.locked && styles.modalItemTextLocked,
+              ]}
+              numberOfLines={1}
+            >
+              {story.title}
+            </Text>
+          </View>
+          <Text style={styles.modalItemMeta}>
+            {distanceLabel} • {timeLabel}
+          </Text>
+          <View style={styles.modalBadgeRow}>
+            {story.completed ? <Text style={styles.completedBadge}>Completed</Text> : null}
+            {story.locked ? <Text style={styles.lockedBadge}>Locked</Text> : null}
+          </View>
+        </Pressable>
+      );
+    },
+    [handleSelectStory, pal, selectedStoryKey],
   );
 
   const headerTranslateY = useMemo(
@@ -478,6 +587,19 @@ export default function ChallengeDetails() {
       Alert.alert("Difficulty locked", `You've already completed the ${label} mode.`);
       return;
     }
+    if (storySelectionRequired && !selectedStory) {
+      Alert.alert("Choose a Story", "Select an unlocked story before starting.");
+      return;
+    }
+    const storyParams = selectedStory
+      ? {
+          storyType: selectedStory.type,
+          storySeasonId: selectedStory.seasonId ?? undefined,
+          storyEpisodeId: selectedStory.episodeId ?? undefined,
+          storyPetKey: selectedStory.petKey ?? undefined,
+          storyId: selectedStory.id ?? selectedStory.progressKey,
+        }
+      : {};
     router.push({
       pathname: "/ChallengesPages/map",
       params: {
@@ -485,7 +607,7 @@ export default function ChallengeDetails() {
         title: data?.title || title || "Challenge",
         category: effectiveCategory,
         difficulty: tab,
-        storyId: selectedStory?.id ?? "",
+        ...storyParams,
       },
     });
   };
@@ -622,7 +744,7 @@ export default function ChallengeDetails() {
             ]}
           >
             <Text style={styles.storyBarText} numberOfLines={1}>
-              {selectedStory?.title ? `Story: ${selectedStory.title}` : "Choose a Story"}
+              {storyBarText}
             </Text>
             <Ionicons name="chevron-down" size={18} color="#0B3D1F" />
           </Pressable>
@@ -674,7 +796,17 @@ export default function ChallengeDetails() {
                 ) : null}
               </View>
             </View>
-        </Animated.View>
+
+            {selectedStory ? (
+              <>
+                <View style={[styles.divider, { backgroundColor: pal.divider }]} />
+                <View style={styles.storySegmentRow}>
+                  <Text style={styles.storySegmentLabel}>Story Segments</Text>
+                  <Text style={styles.storySegmentValue}>{storySegmentDescription}</Text>
+                </View>
+              </>
+            ) : null}
+          </Animated.View>
 
           {/* (Connectivity row removed by request) */}
         </ScrollView>
@@ -704,31 +836,35 @@ export default function ChallengeDetails() {
           <Pressable style={styles.modalBackdrop} onPress={() => setStoryPickerOpen(false)}>
             <View style={styles.modalSheet}>
               <Text style={styles.modalTitle}>Choose a Story</Text>
-              <ScrollView style={{ maxHeight: 320 }}>
-                {stories.length === 0 ? (
-                  <Text style={styles.modalEmpty}>No stories found</Text>
-                ) : (
-                  stories.map((s) => {
-                    const active = s.id === selectedStoryId;
-                    return (
-                      <Pressable
-                        key={s.id}
-                        style={[styles.modalItem, active && styles.modalItemActive, active && { backgroundColor: pal.light }]}
-                        onPress={() => {
-                          setSelectedStoryId(s.id);
-                          setStoryPickerOpen(false);
-                        }}
-                      >
-                        <Text style={[styles.modalItemText, active && { color: pal.strong }]}>
-                          {s.title}
-                        </Text>
-                        <Text style={styles.modalItemMeta}>
-                          {mToKm(s.distanceMeters)} · {s.estimatedTimeMin ?? "—"} min
-                        </Text>
-                      </Pressable>
-                    );
-                  })
-                )}
+              <ScrollView style={{ maxHeight: 360 }}>
+                {storiesLoading ? (
+                  <ActivityIndicator style={{ paddingVertical: 32 }} />
+                ) : (
+                  <>
+                    {petStoryOptions.length ? (
+                      <View style={styles.modalSeason}>
+                        <Text style={styles.modalSectionTitle}>Pet Story</Text>
+                        {petStoryOptions.map(renderStoryOption)}
+                      </View>
+                    ) : null}
+
+                    {seasonSections.map((section) => (
+                      <View key={section.seasonId} style={styles.modalSeason}>
+                        <View style={styles.storyRowHeader}>
+                          <Text style={styles.modalSectionTitle}>{section.title}</Text>
+                          {section.episodes.every((episode) => episode.completed) ? (
+                            <Text style={styles.completedBadge}>Completed</Text>
+                          ) : null}
+                        </View>
+                        {section.episodes.map(renderStoryOption)}
+                      </View>
+                    ))}
+
+                    {!petStoryOptions.length && !seasonSections.length ? (
+                      <Text style={styles.modalEmpty}>No stories found</Text>
+                    ) : null}
+                  </>
+                )}
               </ScrollView>
             </View>
           </Pressable>
@@ -877,8 +1013,39 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   modalItemActive: { backgroundColor: "#EFF6FF" },
+  modalItemLocked: { opacity: 0.6 },
   modalItemText: { fontSize: 15, fontWeight: "800", color: "#000000ff" },
+  modalItemTextLocked: { color: "#6B7280" },
   modalItemMeta: { fontSize: 12, color: "#4B5563", marginTop: 2 },
+  modalBadgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
+  modalSeason: { marginBottom: 16 },
+  modalSectionTitle: { fontSize: 13, fontWeight: "700", color: "#111827", marginBottom: 4 },
+  storyRowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  completedBadge: {
+    fontSize: 12,
+    color: "#065F46",
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  lockedBadge: {
+    fontSize: 12,
+    color: "#92400E",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  storySegmentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 8,
+  },
+  storySegmentLabel: { fontSize: 13, fontWeight: "800", color: "#0B3D1F" },
+  storySegmentValue: { fontSize: 13, color: "#1F2937", flex: 1, textAlign: "right" },
 });
 
 const safeAreaStyle = {

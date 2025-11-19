@@ -1,12 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Image, ImageBackground, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, getDocs, onSnapshot, query, limit } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '@/src/lib/firebase';
 import { PET_XP_PER_LEVEL, PET_MAX_LEVEL } from '@/src/lib/playerProgress';
+import { loadStoryPickerData, SeasonSection, StoryOption } from '@/src/lib/storyPicker';
 
 const bgImage = require('../../assets/images/ImageBackground.jpg');
+const QUICK_CHALLENGE_ID = 'quick-challenge';
+const QUICK_VARIANT_ID: 'easy' | 'hard' = 'easy';
+
+const serializeStoryForRun = (story: StoryOption | null): string | null => {
+  if (!story) return null;
+  const { locked, ...payload } = story;
+  try {
+    return encodeURIComponent(JSON.stringify(payload));
+  } catch {
+    return null;
+  }
+};
 
 export default function QuickChallengeDetails() {
   const router = useRouter();
@@ -55,35 +68,75 @@ export default function QuickChallengeDetails() {
     return { level: evoLevel, progressPct: Math.max(0, Math.min(1, progress)), remainXp: remain, atMax };
   }, [equippedPet]);
 
-  // Stories (pick from the first challenge's stories to mirror ChallengeDetails fetching shape)
-  type Story = { id: string; title: string; distanceMeters?: number; estimatedTimeMin?: number; calories?: number; hiitType?: string };
-  const [stories, setStories] = useState<Story[]>([]);
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
-  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [storySections, setStorySections] = useState<SeasonSection[]>([]);
+  const [flatStoryOptions, setFlatStoryOptions] = useState<StoryOption[]>([]);
+  const [storiesLoading, setStoriesLoading] = useState(false);
+  const [selectedStoryKey, setSelectedStoryKey] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
+    setStoriesLoading(true);
     (async () => {
       try {
-        // take first challenge as the source for stories
-        const q = query(collection(db, 'challenges'), limit(1));
-        const challSnap = await getDocs(q);
-        if (challSnap.empty) return;
-        const first = challSnap.docs[0];
-        const sref = collection(db, 'challenges', first.id, 'stories');
-        const ssnap = await getDocs(sref);
-        if (cancelled) return;
-        const list: Story[] = ssnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-        setStories(list);
-        if (list.length) setSelectedStoryId(list[0].id);
-      } catch {
-        // silent fail; quick mode still usable
+        const result = await loadStoryPickerData({
+          challengeId: QUICK_CHALLENGE_ID,
+          challengeDoc: null,
+          variantId: QUICK_VARIANT_ID,
+          userId: uid,
+          includePetStory: false,
+          includeSeasonSeries: true,
+        });
+        if (!active) return;
+        setStorySections(result.seasonSections);
+        setFlatStoryOptions(result.flatStoryOptions);
+        setSelectedStoryKey((prev) => {
+          if (
+            prev &&
+            result.flatStoryOptions.some((story) => story.progressKey === prev && !story.locked)
+          ) {
+            return prev;
+          }
+          return result.flatStoryOptions.find((story) => !story.locked)?.progressKey ?? null;
+        });
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[QuickChallenge] Failed to load Story Series', error);
+        }
+        if (active) {
+          setStorySections([]);
+          setFlatStoryOptions([]);
+          setSelectedStoryKey(null);
+        }
+      } finally {
+        if (active) setStoriesLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, []);
 
-  const selectedStory = useMemo(() => stories.find((s) => s.id === selectedStoryId) || null, [stories, selectedStoryId]);
+    return () => {
+      active = false;
+    };
+  }, [uid]);
+
+  const selectedStory = useMemo(
+    () => flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ?? null,
+    [flatStoryOptions, selectedStoryKey],
+  );
+  const storyBarLabel = useMemo(() => {
+    if (storiesLoading) return 'Loading stories...';
+    if (!flatStoryOptions.length) return 'No stories available yet';
+    if (selectedStory) return `Story: ${selectedStory.title}`;
+    return 'Choose a Story';
+  }, [flatStoryOptions.length, selectedStory, storiesLoading]);
+
+  const handleSelectStory = useCallback((story: StoryOption) => {
+    if (story.locked) {
+      Alert.alert('Locked Episode', 'Finish the previous episode to unlock this one.');
+      return;
+    }
+    setSelectedStoryKey(story.progressKey);
+    setStoryPickerOpen(false);
+  }, []);
 
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
@@ -116,19 +169,28 @@ export default function QuickChallengeDetails() {
           <View style={styles.card}><Text style={styles.item}>No pet equipped yet.</Text></View>
         )}
 
-        {/* Story picker bar (same pattern as ChallengeDetails) */}
-        <Pressable onPress={() => setStoryPickerOpen(true)} style={[styles.storyBar]}>
+        {/* Story picker bar */}
+        <Pressable
+          onPress={() => {
+            if (!flatStoryOptions.length) {
+              Alert.alert('No stories', 'Story Series episodes will appear here soon.');
+              return;
+            }
+            setStoryPickerOpen(true);
+          }}
+          style={styles.storyBar}
+        >
           <Text style={styles.storyText} numberOfLines={1}>
-            {selectedStory?.title ? `Story: ${selectedStory.title}` : 'Choose a Story'}
+            {storyBarLabel}
           </Text>
-          <Ionicons name="chevron-down" size={18} color="#0B3D1F" />
+          {flatStoryOptions.length > 0 && <Ionicons name="chevron-down" size={18} color="#0B3D1F" />}
         </Pressable>
 
         <View style={styles.card}>
           <Text style={styles.title}>How it works</Text>
           <Text style={styles.item}>- Tap Start to begin tracking.</Text>
           <Text style={styles.item}>- Your position and distance are recorded on the map.</Text>
-          <Text style={styles.item}>- Tap Finish whenever you're done.</Text>
+          <Text style={styles.item}>- Tap Finish whenever you&apos;re done.</Text>
         </View>
 
         <View style={styles.card}>
@@ -139,16 +201,29 @@ export default function QuickChallengeDetails() {
         </View>
 
         <Pressable
-          onPress={() =>
+          onPress={() => {
+            if (flatStoryOptions.length > 0 && !selectedStory) {
+              Alert.alert('Choose a Story', 'Select an unlocked story before starting.');
+              return;
+            }
             Alert.alert(
               'Ready to start?',
-              'Are you ready to start this quick challenge?',
+              selectedStory ? `Start "${selectedStory.title}"?` : 'Start this quick challenge?',
               [
                 { text: 'Not yet', style: 'cancel' },
-                { text: 'Yes, start', onPress: () => router.push('/ChallengesPages/QuickRun') },
+                {
+                  text: 'Yes, start',
+                  onPress: () => {
+                    const storyParam = serializeStoryForRun(selectedStory ?? null);
+                    router.push({
+                      pathname: '/ChallengesPages/QuickRun',
+                      params: storyParam ? { story: storyParam } : {},
+                    });
+                  },
+                },
               ],
-            )
-          }
+            );
+          }}
           style={({ pressed }) => [styles.startBtn, pressed && { transform: [{ scale: 0.98 }] }]}
         >
           <Text style={styles.startText}>Start</Text>
@@ -160,20 +235,55 @@ export default function QuickChallengeDetails() {
             <View style={styles.modalSheet}>
               <Text style={styles.modalTitle}>Choose a Story</Text>
               <ScrollView style={{ maxHeight: 320 }}>
-                {stories.length === 0 ? (
+                {storiesLoading ? (
+                  <Text style={styles.modalEmpty}>Loading stories...</Text>
+                ) : flatStoryOptions.length === 0 ? (
                   <Text style={styles.modalEmpty}>No stories found</Text>
                 ) : (
-                  stories.map((s) => (
-                    <Pressable
-                      key={s.id}
-                      style={styles.modalItem}
-                      onPress={() => {
-                        setSelectedStoryId(s.id);
-                        setStoryPickerOpen(false);
-                      }}
-                    >
-                      <Text style={styles.modalItemText}>{s.title}</Text>
-                    </Pressable>
+                  storySections.map((section) => (
+                    <View key={section.seasonId} style={styles.modalSeason}>
+                      <Text style={styles.modalSectionTitle}>
+                        {section.title} · {section.episodes.length} Episode
+                        {section.episodes.length === 1 ? '' : 's'}
+                      </Text>
+                      {section.episodes.map((story) => {
+                        const active = selectedStoryKey === story.progressKey;
+                        return (
+                          <Pressable
+                            key={story.progressKey}
+                            style={[
+                              styles.modalItem,
+                              active && styles.modalItemActive,
+                              story.locked && styles.modalItemLocked,
+                            ]}
+                            onPress={() => handleSelectStory(story)}
+                          >
+                            <Text
+                              style={[
+                                styles.modalItemText,
+                                story.locked && styles.modalItemTextLocked,
+                              ]}
+                            >
+                              {story.title}
+                            </Text>
+                            <View style={styles.modalMetaRow}>
+                              <Text style={styles.modalItemMeta}>
+                                {story.distanceMeters
+                                  ? `${(story.distanceMeters / 1000).toFixed(1)} km`
+                                  : '—'}{' '}
+                                · {story.estimatedTimeMin ?? story.durationMinutes ?? '--'} min
+                              </Text>
+                              <View style={styles.badgeRow}>
+                                {story.completed ? (
+                                  <Text style={styles.badgeCompleted}>Completed</Text>
+                                ) : null}
+                                {story.locked ? <Text style={styles.badgeLocked}>🔒 Locked</Text> : null}
+                              </View>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
                   ))
                 )}
               </ScrollView>
@@ -258,8 +368,32 @@ const styles = StyleSheet.create({
   modalSheet: { backgroundColor: 'white', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 18, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
   modalTitle: { fontSize: 16, fontWeight: '900', color: '#0B3D1F', marginBottom: 10 },
   modalEmpty: { fontSize: 13, color: '#4B5563', paddingVertical: 10 },
+  modalSeason: { marginBottom: 18 },
+  modalSectionTitle: { fontSize: 14, fontWeight: '800', color: '#0B3D1F', marginBottom: 6 },
   modalItem: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E5E7EB' },
+  modalItemActive: { backgroundColor: '#E0F2F1' },
+  modalItemLocked: { opacity: 0.6 },
   modalItemText: { fontSize: 15, fontWeight: '800', color: '#0B3D1F' },
+  modalItemTextLocked: { color: '#6B7280' },
+  modalMetaRow: { marginTop: 4 },
+  modalItemMeta: { fontSize: 13, color: '#4B5563' },
+  badgeRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
+  badgeCompleted: {
+    fontSize: 12,
+    color: '#065F46',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  badgeLocked: {
+    fontSize: 12,
+    color: '#92400E',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
 });
 
 
