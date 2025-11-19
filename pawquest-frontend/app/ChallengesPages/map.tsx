@@ -3,12 +3,14 @@ import AudioBar, { AudioBarHandle } from "../../components/AudioBar";
 import ChallengeHUD from "../../components/ChallengeHUD";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import { Audio } from "expo-av";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Easing,
   Image,
   StyleSheet,
@@ -31,6 +33,13 @@ import {
   isChallengeFullyLocked,
   VariantCompletionFlags,
 } from "../../src/lib/challengeRuns";
+import {
+  STORY_SEGMENT_COUNT,
+  StorySegments,
+  loadPetStoryForVariant,
+  loadSeasonEpisodesForVariant,
+  saveStoryCompletion,
+} from "../../src/lib/stories";
 
 // 🔑 ORS key (unchanged)
 const ORS_API_KEY =
@@ -157,18 +166,41 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
 export default function MapScreen() {
   const router = useRouter();
   const navigation = useNavigation<any>();
-  const { challengeId: challengeIdParam, difficulty } = useLocalSearchParams<{
+  const {
+    challengeId: challengeIdParam,
+    difficulty,
+    storyType: storyTypeParam,
+    storySeasonId,
+    storyEpisodeId,
+    storyPetKey,
+  } = useLocalSearchParams<{
     challengeId?: string | string[];
     difficulty?: string | string[];
+    storyType?: string | string[];
+    storySeasonId?: string | string[];
+    storyEpisodeId?: string | string[];
+    storyPetKey?: string | string[];
   }>();
   const challengeId = Array.isArray(challengeIdParam) ? challengeIdParam[0] ?? null : challengeIdParam ?? null;
   const difficultyValue = Array.isArray(difficulty) ? difficulty[0] : difficulty;
   const variantParam =
     typeof difficultyValue === "string" && difficultyValue.toLowerCase() === "hard" ? "hard" : "easy";
+  const storyTypeValue = Array.isArray(storyTypeParam) ? storyTypeParam[0] : storyTypeParam;
+  const normalizeParam = (value: string | string[] | null | undefined) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (typeof raw === "string" && raw.trim().length > 0) return raw;
+    return null;
+  };
+  const storySeasonValue = normalizeParam(storySeasonId);
+  const storyEpisodeValue = normalizeParam(storyEpisodeId);
+  const storyPetValue = normalizeParam(storyPetKey);
+  const storyTypeSelection =
+    storyTypeValue === "season" || storyTypeValue === "pet" ? storyTypeValue : null;
   const userId = auth.currentUser?.uid ?? null;
 
   // From DB
   const [challengeTitle, setChallengeTitle] = useState<string | undefined>(undefined);
+  const [challengeDoc, setChallengeDoc] = useState<ChallengeDoc | null>(null);
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [endPoint, setEndPoint] = useState<LatLng | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
@@ -214,6 +246,12 @@ export default function MapScreen() {
   // YOU pulse
   const pulse = useRef(new Animated.Value(0)).current;
   const [variantImageUrl, setVariantImageUrl] = useState<string | null>(null);
+  const [activeStory, setActiveStory] = useState<StorySegments | null>(null);
+  const [storyStatus, setStoryStatus] = useState("Ready");
+  const [storyPlaying, setStoryPlaying] = useState(false);
+  const storySoundsRef = useRef<Audio.Sound[]>([]);
+  const triggeredSegmentsRef = useRef<boolean[]>(Array(STORY_SEGMENT_COUNT).fill(false));
+  const currentStorySegmentRef = useRef<number | null>(null);
 
   useEffect(() => {
     Animated.loop(
@@ -236,12 +274,143 @@ export default function MapScreen() {
   }, [challengeId]);
 
   useEffect(() => {
+    let cancelled = false;
+    const prepareSegments = async () => {
+      const previous = storySoundsRef.current.slice();
+      storySoundsRef.current = [];
+      await Promise.all(
+        previous.map(async (sound) => {
+          try {
+            await sound?.unloadAsync();
+          } catch {}
+        }),
+      );
+      triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+      currentStorySegmentRef.current = null;
+      setStoryPlaying(false);
+      setStoryStatus("Ready");
+      if (!activeStory || activeStory.segmentUrls.length < STORY_SEGMENT_COUNT) return;
+      const sounds: Audio.Sound[] = [];
+      for (const url of activeStory.segmentUrls) {
+        if (cancelled) break;
+        try {
+          const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: false, volume: 1 });
+          sounds.push(sound);
+        } catch (error) {
+          console.warn("[MapScreen] failed to preload story segment", error);
+        }
+      }
+      if (!cancelled) {
+        storySoundsRef.current = sounds;
+      } else {
+        await Promise.all(
+          sounds.map(async (sound) => {
+            try {
+              await sound.unloadAsync();
+            } catch {}
+          }),
+        );
+      }
+    };
+    prepareSegments();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStory]);
+
+  const pauseStoryPlayback = useCallback(async () => {
+    const idx = currentStorySegmentRef.current;
+    if (idx === null) return;
+    const sound = storySoundsRef.current[idx];
+    if (!sound) return;
+    try {
+      await sound.pauseAsync();
+    } catch {}
+    setStoryPlaying(false);
+    setStoryStatus("Paused");
+  }, []);
+
+  const resumeStoryPlayback = useCallback(async () => {
+    const idx = currentStorySegmentRef.current;
+    if (idx === null) return;
+    const sound = storySoundsRef.current[idx];
+    if (!sound) return;
+    try {
+      await sound.playAsync();
+      setStoryPlaying(true);
+      setStoryStatus(`Segment ${idx + 1} playing`);
+    } catch (error) {
+      console.warn("[MapScreen] failed to resume story segment", error);
+    }
+  }, []);
+
+  const stopStoryPlayback = useCallback(async () => {
+    const idx = currentStorySegmentRef.current;
+    if (idx !== null) {
+      try {
+        await storySoundsRef.current[idx]?.stopAsync();
+      } catch {}
+    }
+    currentStorySegmentRef.current = null;
+    setStoryPlaying(false);
+    setStoryStatus("Ready");
+  }, []);
+
+  const playSegmentAtIndex = useCallback(
+    async (targetIndex: number) => {
+      if (!activeStory || !storySoundsRef.current[targetIndex]) return;
+      const currentIdx = currentStorySegmentRef.current;
+      if (currentIdx !== null && currentIdx !== targetIndex) {
+        try {
+          await storySoundsRef.current[currentIdx]?.stopAsync();
+        } catch {}
+      }
+      currentStorySegmentRef.current = targetIndex;
+      triggeredSegmentsRef.current[targetIndex] = true;
+      try {
+        await storySoundsRef.current[targetIndex]?.setPositionAsync(0);
+        await storySoundsRef.current[targetIndex]?.playAsync();
+        setStoryPlaying(true);
+        setStoryStatus(`Segment ${targetIndex + 1} playing`);
+      } catch (error) {
+        console.warn("[MapScreen] failed to start story segment", error);
+        setStoryStatus("Audio unavailable");
+      }
+    },
+    [activeStory],
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state.match(/inactive|background/) && storyPlaying) {
+        void pauseStoryPlayback();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [pauseStoryPlayback, storyPlaying]);
+
+  useEffect(() => {
+    if (!challengeStarted) {
+      triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+      currentStorySegmentRef.current = null;
+      setStoryPlaying(false);
+      setStoryStatus("Ready");
+    }
+  }, [challengeStarted]);
+
+  useEffect(() => {
     navigation.setOptions({ headerShown: !challengeStarted });
   }, [navigation, challengeStarted]);
 
   const challengeLocked = useMemo(
     () => isChallengeFullyLocked(variantCompletions),
     [variantCompletions],
+  );
+  const storyModeActive = useMemo(
+    () => Boolean(activeStory && activeStory.segmentUrls.length === STORY_SEGMENT_COUNT),
+    [activeStory],
   );
 
   const variantLocked = useMemo(() => {
@@ -313,6 +482,7 @@ export default function MapScreen() {
   // 1) Load challenge from DB
   useEffect(() => {
     let isMounted = true;
+    setChallengeDoc(null);
     (async () => {
       try {
         const id = challengeId || "default";
@@ -322,6 +492,7 @@ export default function MapScreen() {
           return;
         }
         const data = snap.data() as ChallengeDoc;
+        setChallengeDoc(data);
 
         const preferredVariant = readVariant(data, variantParam);
         const easyVariant = variantParam === "easy" ? preferredVariant : readVariant(data, "easy");
@@ -385,6 +556,65 @@ export default function MapScreen() {
     AsyncStorage.multiRemove([`${cacheKey}:coords`, `${cacheKey}:summary`]).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey]);
+
+  useEffect(
+    () => () => {
+      storySoundsRef.current.forEach((sound: Audio.Sound) => {
+        sound.unloadAsync().catch(() => {});
+      });
+      storySoundsRef.current = [];
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStory = async () => {
+      if (!challengeId || !storyTypeSelection || !challengeDoc) {
+        setActiveStory(null);
+        return;
+      }
+      const docData = challengeDoc;
+      try {
+        let story: StorySegments | null = null;
+        if (storyTypeSelection === "pet") {
+          if (storyPetValue && storyPetValue !== "pigeon") {
+            setActiveStory(null);
+            return;
+          }
+          story = await loadPetStoryForVariant(docData, variantParam, {
+            challengeId,
+          });
+        } else {
+          const episodes = await loadSeasonEpisodesForVariant(variantParam, {
+            challengeId,
+            seasonId: storySeasonValue ?? undefined,
+          });
+          story =
+            episodes.find(
+              (episode) =>
+                (storySeasonValue ? episode.seasonId === storySeasonValue : true) &&
+                (storyEpisodeValue ? episode.episodeId === storyEpisodeValue : true),
+            ) ?? null;
+        }
+        if (cancelled) return;
+        setActiveStory(story);
+        setStoryStatus("Ready");
+        setStoryPlaying(false);
+        triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+        currentStorySegmentRef.current = null;
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[MapScreen] failed to load story", error);
+          setActiveStory(null);
+        }
+      }
+    };
+    loadStory();
+    return () => {
+      cancelled = true;
+    };
+  }, [challengeDoc, challengeId, storyTypeSelection, storySeasonValue, storyEpisodeValue, storyPetValue, variantParam]);
 
   // 3) Permissions + watcher (start after we have DB points)
   useEffect(() => {
@@ -462,8 +692,14 @@ export default function MapScreen() {
 
   // auto-stop audio near end
   useEffect(() => {
-    if (challengeStarted && nearEnd) audioRef.current?.fadeOut();
-  }, [challengeStarted, nearEnd]);
+    if (challengeStarted && nearEnd) {
+      if (storyModeActive) {
+        void stopStoryPlayback();
+      } else {
+        audioRef.current?.fadeOut();
+      }
+    }
+  }, [challengeStarted, nearEnd, stopStoryPlayback, storyModeActive]);
 
   // nudge to go to start
   useEffect(() => {
@@ -494,7 +730,11 @@ export default function MapScreen() {
     const off = onChallengeViolation(() => {
       if (!challengeStarted) return;
       setChallengeStarted(false);
-      audioRef.current?.fadeOut();
+      if (storyModeActive) {
+        void stopStoryPlayback();
+      } else {
+        audioRef.current?.fadeOut();
+      }
       Alert.alert(
         "Warning",
         "Using transportation is not allowed.",
@@ -512,7 +752,7 @@ export default function MapScreen() {
         off();
       } catch {}
     };
-  }, [challengeStarted, router]);
+  }, [challengeStarted, router, stopStoryPlayback, storyModeActive]);
 
   // cleanup pre-start fetcher on unmount
   useEffect(
@@ -723,6 +963,25 @@ export default function MapScreen() {
     remainingM !== null && totalM !== null && totalM > 0
       ? Math.min(1, Math.max(0, 1 - remainingM / totalM))
       : 0;
+  const totalStoryDistance = useMemo(() => {
+    if (initialRouteDistanceM && initialRouteDistanceM > 0) return initialRouteDistanceM;
+    if (activeStory?.distanceMeters && activeStory.distanceMeters > 0)
+      return activeStory.distanceMeters;
+    return null;
+  }, [initialRouteDistanceM, activeStory?.distanceMeters]);
+
+  useEffect(() => {
+    if (!storyModeActive || !challengeStarted || !totalStoryDistance || totalStoryDistance <= 0) return;
+    const thresholds = Array.from({ length: STORY_SEGMENT_COUNT }, (_, idx) =>
+      idx === 0 ? 0 : (idx * totalStoryDistance) / STORY_SEGMENT_COUNT,
+    );
+    const distanceCovered = totalStoryDistance * progress;
+    thresholds.forEach((threshold, idx) => {
+      if (distanceCovered >= threshold && !triggeredSegmentsRef.current[idx]) {
+        void playSegmentAtIndex(idx);
+      }
+    });
+  }, [challengeStarted, playSegmentAtIndex, progress, storyModeActive, totalStoryDistance]);
 
   // if not ready (need DB points and location)
   if (!startPoint || !endPoint || !hasPermission || !region || !userLocation) {
@@ -735,10 +994,7 @@ export default function MapScreen() {
   }
 
   // Build audio source (allow remote or fallback local asset)
-  const audioSource =
-    audioUrl && audioUrl.startsWith("http")
-      ? { uri: audioUrl }
-      : require("../../assets/audio/track.mp3");
+  const audioSource = audioUrl && audioUrl.startsWith("http") ? { uri: audioUrl } : undefined;
 
   return (
     <View style={styles.container}>
@@ -815,7 +1071,11 @@ export default function MapScreen() {
           onCapture={async () => {
             if (navigatingRef.current) return;
             navigatingRef.current = true;
-            audioRef.current?.fadeOut();
+            if (storyModeActive) {
+              await stopStoryPlayback();
+            } else {
+              audioRef.current?.fadeOut();
+            }
             // finalize background tracking session and persist metrics
             let sessionTotals: { steps: number; calories: number } = { steps: 0, calories: 0 };
             try {
@@ -846,6 +1106,13 @@ export default function MapScreen() {
 
             if (challengeId) baseParams.challengeId = challengeId;
             if (variantImageUrl) baseParams.imageUrl = variantImageUrl;
+            if (userId && activeStory) {
+              try {
+                await saveStoryCompletion(userId, activeStory);
+              } catch (error) {
+                console.warn("[MapScreen] failed to save story completion", error);
+              }
+            }
             router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
           }}
         />
@@ -871,7 +1138,18 @@ export default function MapScreen() {
               distance: 0,
               lastPoint: userLocation ?? null,
             };
-            audioRef.current?.play();
+            const useStoryAudio = Boolean(
+              activeStory && activeStory.segmentUrls.length === STORY_SEGMENT_COUNT,
+            );
+            if (useStoryAudio) {
+              triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+              currentStorySegmentRef.current = null;
+              setStoryStatus("Ready");
+              setStoryPlaying(false);
+              void playSegmentAtIndex(0);
+            } else {
+              audioRef.current?.play();
+            }
             if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
           }}
         >
@@ -884,9 +1162,21 @@ export default function MapScreen() {
       {/* Bottom audio bar — only after Start */}
       <AudioBar
         ref={audioRef}
-        title={challengeTitle || "The Lost Letter"}
-        source={audioSource}
-        visible={challengeStarted}
+        title={
+          storyModeActive && activeStory ? activeStory.title : challengeTitle || "The Lost Letter"
+        }
+        source={storyModeActive ? undefined : audioSource}
+        visible={challengeStarted && (!storyModeActive || Boolean(activeStory))}
+        controlledState={
+          storyModeActive
+            ? {
+                isPlaying: storyPlaying,
+                statusText: storyStatus,
+                onPlay: () => void resumeStoryPlayback(),
+                onPause: () => void pauseStoryPlayback(),
+              }
+            : undefined
+        }
       />
     </View>
   );
@@ -952,3 +1242,4 @@ const styles = StyleSheet.create({
   startPromptMessage: { color: "#E5E7EB", fontSize: 14, marginTop: 6 },
   startPromptCta: { color: "#93C5FD", fontSize: 13, marginTop: 10, fontWeight: "600" },
 });
+

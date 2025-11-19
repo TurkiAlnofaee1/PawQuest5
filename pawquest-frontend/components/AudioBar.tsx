@@ -17,16 +17,24 @@ export type AudioBarHandle = {
 
 type Props = {
   title: string;
-  source: AVPlaybackSource; // { uri: string } or require("...mp3")
+  source?: AVPlaybackSource; // { uri: string } or require("...mp3")
   visible: boolean;
+  controlledState?: {
+    isPlaying: boolean;
+    statusText?: string;
+    onPlay: () => void;
+    onPause: () => void;
+  };
 };
 
-const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, ref) => {
+const AudioBar = forwardRef<AudioBarHandle, Props>(
+  ({ title, source, visible, controlledState }, ref) => {
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
   const slideY = useRef(new Animated.Value(80)).current; // slide in/out
+  const isControlled = Boolean(controlledState);
 
   // slide in/out on visible
   useEffect(() => {
@@ -51,6 +59,7 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, 
   }, []);
 
   const loadIfNeeded = async () => {
+    if (isControlled || !source) return;
     if (soundRef.current) return;
     const { sound } = await Audio.Sound.createAsync(source, {
       volume: volume,
@@ -67,6 +76,10 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, 
   };
 
   const play = async () => {
+    if (isControlled && controlledState) {
+      controlledState.onPlay();
+      return;
+    }
     await loadIfNeeded();
     if (!soundRef.current) return;
     await soundRef.current.setVolumeAsync(1);
@@ -75,11 +88,19 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, 
   };
 
   const pause = async () => {
+    if (isControlled && controlledState) {
+      controlledState.onPause();
+      return;
+    }
     if (!soundRef.current) return;
     await soundRef.current.pauseAsync();
   };
 
   const fadeOut = async (ms = 1200) => {
+    if (isControlled && controlledState) {
+      controlledState.onPause();
+      return;
+    }
     if (!soundRef.current) return;
     try {
       const steps = 12;
@@ -124,11 +145,17 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, 
     >
       <View style={styles.bar}>
         <TouchableOpacity
-          onPress={() => (isPlaying ? pause() : play())}
+          onPress={() =>
+            (isControlled ? controlledState?.isPlaying : isPlaying) ? pause() : play()
+          }
           style={styles.btn}
           activeOpacity={0.8}
         >
-          <Ionicons name={isPlaying ? "pause" : "play"} size={22} color="#0B1221" />
+          <Ionicons
+            name={(isControlled ? controlledState?.isPlaying : isPlaying) ? "pause" : "play"}
+            size={22}
+            color="#0B1221"
+          />
         </TouchableOpacity>
 
         <View style={styles.meta}>
@@ -136,13 +163,15 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(({ title, source, visible }, 
             {title || "Audio"}
           </Text>
           <Text style={styles.subtitle}>
-            {isLoaded ? (isPlaying ? "Playing" : "Paused") : "Ready"}
+            {controlledState?.statusText ??
+              (isLoaded ? (isPlaying ? "Playing" : "Paused") : "Ready")}
           </Text>
         </View>
       </View>
     </Animated.View>
   );
-});
+},
+);
 
 export default AudioBar;
 
