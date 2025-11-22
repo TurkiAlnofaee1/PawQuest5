@@ -184,6 +184,8 @@ export default function ChallengeDetails() {
   const [seasonSections, setSeasonSections] = useState<SeasonSection[]>([]);
   const [flatStoryOptions, setFlatStoryOptions] = useState<StoryOption[]>([]);
   const [selectedStoryKey, setSelectedStoryKey] = useState<string | null>(null);
+  const [expandedSeasonId, setExpandedSeasonId] = useState<string | null>(null);
+  const [hasUserChosenStory, setHasUserChosenStory] = useState(false);
   const [variantCompletions, setVariantCompletions] = useState<VariantCompletionFlags>({
     easy: false,
     hard: false,
@@ -415,9 +417,9 @@ export default function ChallengeDetails() {
   const storyBarText = useMemo(() => {
     if (storiesLoading) return "Loading stories...";
     if (!flatStoryOptions.length) return "No stories available yet";
-    if (selectedStory) return `Story: ${selectedStory.title}`;
+    if (hasUserChosenStory && selectedStory) return `Story: ${selectedStory.title}`;
     return "Choose a Story";
-  }, [flatStoryOptions.length, selectedStory, storiesLoading]);
+  }, [flatStoryOptions.length, hasUserChosenStory, selectedStory, storiesLoading]);
 
   const storySegmentDescription = useMemo(
     () => describeSegmentsMeta(selectedStory),
@@ -452,6 +454,7 @@ export default function ChallengeDetails() {
         Alert.alert("Locked episode", "Finish the previous episode to unlock this story.");
         return;
       }
+      setHasUserChosenStory(true);
       setSelectedStoryKey(story.progressKey);
       setStoryPickerOpen(false);
     },
@@ -848,17 +851,34 @@ export default function ChallengeDetails() {
                       </View>
                     ) : null}
 
-                    {seasonSections.map((section) => (
-                      <View key={section.seasonId} style={styles.modalSeason}>
-                        <View style={styles.storyRowHeader}>
-                          <Text style={styles.modalSectionTitle}>{section.title}</Text>
-                          {section.episodes.every((episode) => episode.completed) ? (
-                            <Text style={styles.completedBadge}>Completed</Text>
-                          ) : null}
-                        </View>
-                        {section.episodes.map(renderStoryOption)}
-                      </View>
-                    ))}
+                    {seasonSections.map((section) => {
+                      const expanded = expandedSeasonId === section.seasonId;
+                      return (
+                        <View key={section.seasonId} style={styles.modalSeason}>
+                          <Pressable
+                            onPress={() =>
+                              setExpandedSeasonId(expanded ? null : section.seasonId)
+                            }
+                          >
+                            <View style={styles.storyRowHeader}>
+                              <Text style={styles.modalSectionTitle}>{section.title}</Text>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                {section.episodes.every((episode) => episode.completed) ? (
+                                  <Text style={styles.completedBadge}>Completed</Text>
+                                ) : null}
+                                <Ionicons
+                                  name={expanded ? "chevron-up" : "chevron-down"}
+                                  size={16}
+                                  color="#111827"
+                                />
+                              </View>
+                            </View>
+                          </Pressable>
+
+                          {expanded ? section.episodes.map(renderStoryOption) : null}
+                        </View>
+                      );
+                    })}
 
                     {!petStoryOptions.length && !seasonSections.length ? (
                       <Text style={styles.modalEmpty}>No stories found</Text>
@@ -1018,8 +1038,8 @@ const styles = StyleSheet.create({
   modalItemTextLocked: { color: "#6B7280" },
   modalItemMeta: { fontSize: 12, color: "#4B5563", marginTop: 2 },
   modalBadgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
-  modalSeason: { marginBottom: 16 },
-  modalSectionTitle: { fontSize: 13, fontWeight: "700", color: "#111827", marginBottom: 4 },
+  modalSeason: { marginBottom: 20 },
+  modalSectionTitle: { fontSize: 18, fontWeight: "900", color: "#111827", marginBottom: 8 },
   storyRowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   completedBadge: {
     fontSize: 12,
