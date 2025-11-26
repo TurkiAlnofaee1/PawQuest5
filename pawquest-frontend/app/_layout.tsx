@@ -11,7 +11,8 @@ import Splash from '@/components/Splash';
 import Entrance from '@/components/Entrance';
 import { useEffect } from 'react';
 // useRouter already imported above
-
+import { Buffer } from "buffer";
+global.Buffer = Buffer;
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, initializing } = useAuth();
   const router = useRouter();

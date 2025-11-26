@@ -10,10 +10,13 @@ import {
   StyleSheet,
   Text,
   View,
+  TouchableOpacity,
+  FlatList,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, getDoc, collection, getDocs } from "firebase/firestore";
 import { auth, db } from "@/src/lib/firebase";
 import { PET_MAX_LEVEL, PET_XP_PER_LEVEL } from "@/src/lib/playerProgress";
 import { loadStoryPickerData, SeasonSection, StoryOption } from "@/src/lib/storyPicker";
@@ -31,6 +34,14 @@ const serializeStoryForRun = (story: StoryOption | null): string | null => {
     return null;
   }
 };
+
+type QuickAudio = {
+  id: string;
+  title: string;
+  uri: string;
+};
+
+type PickerStep = "root" | "series" | "stories";
 
 export default function QuickChallengeDetails() {
   const router = useRouter();
@@ -69,12 +80,14 @@ export default function QuickChallengeDetails() {
       const d = snap.data() as any;
       const xp = typeof d?.xp === "number" ? d.xp : 0;
       const evoLvl = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
+
       const imgs: string[] = Array.isArray(d?.images)
         ? d.images.filter((u: any) => typeof u === "string" && u.length > 0)
         : [];
       const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
       const stageName = ["Baby", "Big", "King"][Math.min(2, stageIdx)] ?? "Baby";
       const baseName = (d?.name ?? "Pet").toString();
+
       setEquippedPet({ id: snap.id, ...d, name: `${stageName} ${baseName}` });
     });
     return () => unsubPet();
@@ -95,6 +108,7 @@ export default function QuickChallengeDetails() {
     const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
     const atMax = evoLevel >= PET_MAX_LEVEL;
     const remain = atMax ? 0 : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0);
+
     return {
       level: evoLevel,
       progressPct: Math.max(0, Math.min(1, progress)),
@@ -125,9 +139,11 @@ export default function QuickChallengeDetails() {
           includePetStory: false,
           includeSeasonSeries: true,
         });
+
         if (!active) return;
         setStorySections(result.seasonSections);
         setFlatStoryOptions(result.flatStoryOptions);
+
         setSelectedStoryKey((prev) => {
           if (
             prev &&
@@ -140,10 +156,7 @@ export default function QuickChallengeDetails() {
           return result.flatStoryOptions.find((story) => !story.locked)?.progressKey ?? null;
         });
       } catch (error) {
-        if (__DEV__) {
-          // eslint-disable-next-line no-console
-          console.warn("[QuickChallenge] Failed to load Story Series", error);
-        }
+        if (__DEV__) console.warn("[QuickChallenge] Failed to load Story Series", error);
         if (active) {
           setStorySections([]);
           setFlatStoryOptions([]);
@@ -160,8 +173,7 @@ export default function QuickChallengeDetails() {
   }, [uid]);
 
   const selectedStory = useMemo(
-    () =>
-      flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ?? null,
+    () => flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ?? null,
     [flatStoryOptions, selectedStoryKey],
   );
 
@@ -180,9 +192,173 @@ export default function QuickChallengeDetails() {
     setStoryPickerOpen(false);
   }, []);
 
+  // Audio picker
+  const [audioPickerOpen, setAudioPickerOpen] = useState(false);
+  const [pickerStep, setPickerStep] = useState<PickerStep>("root");
+  const [selectedAudio, setSelectedAudio] = useState<QuickAudio | null>(null);
+  const [seriesOptions, setSeriesOptions] = useState<QuickAudio[]>([]);
+  const [storiesOptions, setStoriesOptions] = useState<QuickAudio[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const loadSeries = async () => {
+    if (seriesOptions.length > 0) {
+      setPickerStep("series");
+      return;
+    }
+    setLoading(true);
+    try {
+      const ref = doc(db, "Story Series", "The herb of dawn");
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        console.log("❌ Story Series doc not found");
+        setSeriesOptions([]);
+        setPickerStep("series");
+        return;
+      }
+
+      const data = snap.data() as Record<string, unknown>;
+      const list: QuickAudio[] = [];
+
+      Object.entries(data).forEach(([episodeKey, value]) => {
+        if (Array.isArray(value)) {
+          (value as unknown[]).forEach((url, index) => {
+            if (typeof url === "string" && url.length > 0) {
+              list.push({
+                id: `${episodeKey}-${index}`,
+                title: `${episodeKey} • Part ${index + 1}`,
+                uri: url,
+              });
+            }
+          });
+        }
+      });
+
+      setSeriesOptions(list);
+      setPickerStep("series");
+    } catch (err) {
+      console.error("🔥 Error loading Story Series:", err);
+      setSeriesOptions([]);
+      setPickerStep("series");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadStories = async () => {
+    if (storiesOptions.length > 0) {
+      setPickerStep("stories");
+      return;
+    }
+    setLoading(true);
+    try {
+      const snap = await getDocs(collection(db, "stories"));
+      const list: QuickAudio[] = [];
+
+      snap.forEach((docSnap) => {
+        const raw = docSnap.data() as any;
+        const uri: unknown = raw?.audioUrl || raw?.audioURI || raw?.audio;
+        if (typeof uri === "string" && uri.length > 0) {
+          list.push({
+            id: docSnap.id,
+            title: String(raw?.title ?? "Story"),
+            uri,
+          });
+        }
+      });
+
+      setStoriesOptions(list);
+      setPickerStep("stories");
+    } catch (err) {
+      console.error("🔥 Error loading stories:", err);
+      setStoriesOptions([]);
+      setPickerStep("stories");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStart = () => {
+    router.push({
+      pathname: "/ChallengesPages/QuickRun",
+      params: {
+        audioUri: selectedAudio ? selectedAudio.uri : "",
+        audioTitle: selectedAudio ? selectedAudio.title : "",
+      },
+    });
+  };
+
+  const openAudioPicker = () => {
+    setPickerStep("root");
+    setAudioPickerOpen(true);
+  };
+
+  const closeAudioPicker = () => {
+    setAudioPickerOpen(false);
+    setPickerStep("root");
+  };
+
+  const renderRootStep = () => (
+    <>
+      <TouchableOpacity style={styles.modeBtn} onPress={loadSeries} activeOpacity={0.9}>
+        <Text style={styles.modeTitle}>📚 Story Series</Text>
+        <Text style={styles.modeSubtitle}>Listen in episodes from a series.</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.modeBtn} onPress={loadStories} activeOpacity={0.9}>
+        <Text style={styles.modeTitle}>📖 Stories</Text>
+        <Text style={styles.modeSubtitle}>Pick from saved AI stories.</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.modeBtn, { backgroundColor: "#FEE2E2" }]}
+        onPress={() => {
+          setSelectedAudio(null);
+          closeAudioPicker();
+        }}
+        activeOpacity={0.9}
+      >
+        <Text style={[styles.modeTitle, { color: "#991B1B" }]}>🚫 No Audio</Text>
+        <Text style={[styles.modeSubtitle, { color: "#7F1D1D" }]}>
+          Run silently without any story.
+        </Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  const renderListStep = (data: QuickAudio[], emptyLabel: string) => (
+    <>
+      <TouchableOpacity onPress={() => setPickerStep("root")} style={{ marginBottom: 8 }}>
+        <Text style={{ fontWeight: "700", color: "#2563EB" }}>← Back</Text>
+      </TouchableOpacity>
+
+      {loading ? (
+        <ActivityIndicator size="large" color="#000" style={{ marginTop: 16 }} />
+      ) : data.length === 0 ? (
+        <Text style={{ marginTop: 16, color: "#4B5563" }}>{emptyLabel}</Text>
+      ) : (
+        <FlatList
+          data={data}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.audioOption}
+              onPress={() => {
+                setSelectedAudio(item);
+                closeAudioPicker();
+              }}
+            >
+              <Text style={styles.audioOptionText}>{item.title}</Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
+    </>
+  );
+
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={styles.safe}>
+        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.h1}>Quick Challenge</Text>
           <Text style={styles.h2}>Start anywhere. Finish anytime.</Text>
@@ -219,8 +395,7 @@ export default function QuickChallengeDetails() {
                   {(equippedPet.name ?? "Pet").toString().toUpperCase()}
                 </Text>
                 {(() => {
-                  const xpNow =
-                    typeof equippedPet?.xp === "number" ? equippedPet.xp : 0;
+                  const xpNow = typeof equippedPet?.xp === "number" ? equippedPet.xp : 0;
                   const evo = Math.floor(xpNow / PET_XP_PER_LEVEL);
                   const imgs: string[] = Array.isArray(equippedPet?.images)
                     ? (equippedPet!.images as string[]).filter(
@@ -278,50 +453,32 @@ export default function QuickChallengeDetails() {
           )}
         </Pressable>
 
+        {/* How it works */}
         <View style={styles.card}>
           <Text style={styles.title}>How it works</Text>
           <Text style={styles.item}>- Tap Start to begin tracking.</Text>
-          <Text style={styles.item}>
-            - Your position and distance are recorded on the map.
-          </Text>
+          <Text style={styles.item}>- Your position and distance are recorded on the map.</Text>
           <Text style={styles.item}>- Tap Finish whenever you're done.</Text>
         </View>
 
+        {/* XP Rules */}
         <View style={styles.card}>
           <Text style={styles.title}>XP Rules</Text>
           <Text style={styles.item}>- You earn 1 XP for every 5 steps.</Text>
-          <Text style={styles.item}>
-            - Partial kms don’t count (1.5 km → 1 km).
-          </Text>
+          <Text style={styles.item}>- Partial kms don’t count (1.5 km → 1 km).</Text>
           <Text style={styles.item}>- Only your equipped pet evolves.</Text>
         </View>
 
+        {/* Audio summary + button */}
+        <Pressable onPress={openAudioPicker} style={styles.audioBtn}>
+          <Text style={styles.audioBtnText}>
+            {selectedAudio ? `Audio: ${selectedAudio.title}` : "Choose Audio 🎵"}
+          </Text>
+        </Pressable>
+
+        {/* Start Button */}
         <Pressable
-          onPress={() => {
-            if (flatStoryOptions.length > 0 && !selectedStory) {
-              Alert.alert("Choose a Story", "Select an unlocked story before starting.");
-              return;
-            }
-            Alert.alert(
-              "Ready to start?",
-              selectedStory
-                ? `Start "${selectedStory.title}"?`
-                : "Start this quick challenge?",
-              [
-                { text: "Not yet", style: "cancel" },
-                {
-                  text: "Yes, start",
-                  onPress: () => {
-                    const storyParam = serializeStoryForRun(selectedStory ?? null);
-                    router.push({
-                      pathname: "/ChallengesPages/QuickRun",
-                      params: storyParam ? { story: storyParam } : {},
-                    });
-                  },
-                },
-              ],
-            );
-          }}
+          onPress={handleStart}
           style={({ pressed }) => [
             styles.startBtn,
             pressed && { transform: [{ scale: 0.98 }] },
@@ -355,16 +512,12 @@ export default function QuickChallengeDetails() {
                       <View key={section.seasonId} style={styles.modalSeason}>
                         <Pressable
                           onPress={() =>
-                            setExpandedSeasonId(
-                              expanded ? null : section.seasonId,
-                            )
+                            setExpandedSeasonId(expanded ? null : section.seasonId)
                           }
                         >
                           <View style={styles.modalHeaderRow}>
                             <View style={{ flexShrink: 1 }}>
-                              <Text style={styles.modalSectionTitle}>
-                                {section.title}
-                              </Text>
+                              <Text style={styles.modalSectionTitle}>{section.title}</Text>
                               <Text style={styles.modalSectionSubtitle}>
                                 {section.episodes.length} Episode
                                 {section.episodes.length === 1 ? "" : "s"}
@@ -380,8 +533,7 @@ export default function QuickChallengeDetails() {
 
                         {expanded
                           ? section.episodes.map((story) => {
-                              const active =
-                                selectedStoryKey === story.progressKey;
+                              const active = selectedStoryKey === story.progressKey;
                               return (
                                 <Pressable
                                   key={story.progressKey}
@@ -395,8 +547,7 @@ export default function QuickChallengeDetails() {
                                   <Text
                                     style={[
                                       styles.modalItemText,
-                                      story.locked &&
-                                        styles.modalItemTextLocked,
+                                      story.locked && styles.modalItemTextLocked,
                                     ]}
                                   >
                                     {story.title}
@@ -404,9 +555,7 @@ export default function QuickChallengeDetails() {
                                   <View style={styles.modalMetaRow}>
                                     <Text style={styles.modalItemMeta}>
                                       {story.distanceMeters
-                                        ? `${(
-                                            story.distanceMeters / 1000
-                                          ).toFixed(1)} km`
+                                        ? `${(story.distanceMeters / 1000).toFixed(1)} km`
                                         : "-"}{" "}
                                       •{" "}
                                       {story.estimatedTimeMin ??
@@ -416,14 +565,10 @@ export default function QuickChallengeDetails() {
                                     </Text>
                                     <View style={styles.badgeRow}>
                                       {story.completed ? (
-                                        <Text style={styles.badgeCompleted}>
-                                          Completed
-                                        </Text>
+                                        <Text style={styles.badgeCompleted}>Completed</Text>
                                       ) : null}
                                       {story.locked ? (
-                                        <Text style={styles.badgeLocked}>
-                                          Locked
-                                        </Text>
+                                        <Text style={styles.badgeLocked}>Locked</Text>
                                       ) : null}
                                     </View>
                                   </View>
@@ -439,6 +584,24 @@ export default function QuickChallengeDetails() {
             </View>
           </Pressable>
         </Modal>
+
+        {/* Audio Picker Modal */}
+        <Modal visible={audioPickerOpen} transparent animationType="fade">
+          <Pressable style={styles.modalBackdrop} onPress={closeAudioPicker}>
+            <View style={styles.modalSheet}>
+              <Text style={styles.modalTitle}>Choose Audio</Text>
+
+              {pickerStep === "root" && renderRootStep()}
+
+              {pickerStep === "series" &&
+                renderListStep(seriesOptions, "No episodes found in Story Series.")}
+
+              {pickerStep === "stories" &&
+                renderListStep(storiesOptions, "No stories with audio found.")}
+            </View>
+          </Pressable>
+        </Modal>
+
       </SafeAreaView>
     </ImageBackground>
   );
@@ -447,6 +610,7 @@ export default function QuickChallengeDetails() {
 const styles = StyleSheet.create({
   bg: { flex: 1 },
   safe: { flex: 1 },
+
   header: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6 },
   h1: { fontSize: 32, fontWeight: "900", color: "#000" },
   h2: { fontSize: 16, fontWeight: "700", color: "#000", marginTop: 2 },
@@ -457,32 +621,31 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 16,
     backgroundColor: "#BEE3BF",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
   title: { fontSize: 18, fontWeight: "900", color: "#0B3D1F", marginBottom: 8 },
   item: { fontSize: 15, fontWeight: "700", color: "#0B3D1F", marginVertical: 2 },
 
+  audioBtn: {
+    marginTop: 14,
+    marginHorizontal: 20,
+    backgroundColor: "#A5D6A7",
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: "center",
+  },
+  audioBtnText: { fontSize: 16, fontWeight: "800", color: "#0B3D1F" },
+
   startBtn: {
-    marginTop: 30,
+    marginTop: 14,
     marginHorizontal: 20,
     backgroundColor: "#22C55E",
     borderRadius: 18,
     paddingVertical: 16,
     alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
   },
   startText: { color: "#fff", fontSize: 18, fontWeight: "900" },
 
-  // Equipped pet block
+  // Equipped pet
   petCard: {
     marginHorizontal: 20,
     marginTop: 12,
@@ -509,7 +672,7 @@ const styles = StyleSheet.create({
   progressFill: { height: "100%", backgroundColor: "#10B981" },
   levelText: { marginTop: 6, color: "#0B3D1F", fontWeight: "800" },
 
-  // Story bar + modal
+  // Story bar
   storyBar: {
     marginHorizontal: 20,
     marginTop: 10,
@@ -530,6 +693,8 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 10,
   },
+
+  // Modals
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",
@@ -542,6 +707,7 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
+    maxHeight: "60%",
   },
   modalTitle: {
     fontSize: 16,
@@ -550,6 +716,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   modalEmpty: { fontSize: 13, color: "#4B5563", paddingVertical: 10 },
+
   modalSeason: { marginBottom: 20 },
   modalHeaderRow: {
     flexDirection: "row",
@@ -564,6 +731,7 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     marginTop: 2,
   },
+
   modalItem: {
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -573,6 +741,7 @@ const styles = StyleSheet.create({
   modalItemLocked: { opacity: 0.6 },
   modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
   modalItemTextLocked: { color: "#6B7280" },
+
   modalMetaRow: { marginTop: 4 },
   modalItemMeta: { fontSize: 13, color: "#4B5563" },
   badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
@@ -592,4 +761,21 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 999,
   },
+
+  modeBtn: {
+    backgroundColor: "#E5F9E7",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  modeTitle: { fontSize: 16, fontWeight: "900", color: "#0B3D1F" },
+  modeSubtitle: { fontSize: 13, color: "#374151", marginTop: 2 },
+
+  audioOption: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  audioOptionText: { fontSize: 15, fontWeight: "700", color: "#111827" },
 });
