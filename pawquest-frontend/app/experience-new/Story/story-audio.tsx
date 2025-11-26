@@ -1,84 +1,91 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ImageBackground, ActivityIndicator } from "react-native";
-import * as Speech from "expo-speech";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ImageBackground } from "react-native";
+import { Audio } from "expo-av";
 import { useLocalSearchParams } from "expo-router";
+import { generateVoiceFromElevenLabs } from "../../../src/lib/services/ttsEleven";
+
+import TopBar from "@/components/TopBar";
 
 const bgImage = require("../../../assets/images/ImageBackground.jpg");
 
 export default function StoryAudioScreen() {
-  const { story, title } = useLocalSearchParams<{ story?: string; title?: string }>();
+  const { story, title } = useLocalSearchParams();
+  const [sound, setSound] = useState<any>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  async function playStory() {
-    if (!story) return;
-    try {
-      setLoading(true);
-      Speech.speak(story, {
-        language: "en-US",
-        rate: 1.0,
-        pitch: 1.0,
-        onDone: () => setIsPlaying(false),
-      });
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+
+        console.log("🎧 Requesting StreamElements TTS...");
+        const audioUri = await generateVoiceFromElevenLabs(story);
+const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
+setSound(sound);
+await sound.playAsync();
+
+        setIsPlaying(true);
+
+      } catch (err) {
+        console.error("Audio Error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      if (sound) sound.unloadAsync();
+    };
+  }, []);
+
+  const togglePlayPause = async () => {
+    if (!sound) return;
+    const status = await sound.getStatusAsync();
+
+    if (status.isPlaying) {
+      await sound.pauseAsync();
+      setIsPlaying(false);
+    } else {
+      await sound.playAsync();
       setIsPlaying(true);
-    } catch (err) {
-      console.error("Speech error:", err);
-    } finally {
-      setLoading(false);
     }
-  }
-
-  function stopStory() {
-    Speech.stop();
-    setIsPlaying(false);
-  }
+  };
 
   return (
-    <View style={styles.root}>
-      <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
-      <View style={styles.topBar}>
-        <Text style={styles.topText}>{title || "Story Audio"}</Text>
-      </View>
+    <ImageBackground source={bgImage} style={styles.bg}>
+      <View style={styles.container}>
+        <TopBar title="Story Audio 🎧" backTo="/(tabs)/settings" />
 
-      <View style={styles.center}>
-        <Text style={styles.header}>{title || "Your Story"}</Text>
-        <Text style={styles.subtext}>
-          {isPlaying ? "🎧 Playing your story..." : "Tap Play to begin!"}
-        </Text>
+        <Text style={styles.title}>{title || "Generated Story"}</Text>
 
         {loading ? (
-          <ActivityIndicator size="large" color="#fff" />
+          <ActivityIndicator size="large" color="#111" />
         ) : (
-          <TouchableOpacity
-            style={[styles.playBtn, isPlaying && { backgroundColor: "#c62828" }]}
-            onPress={isPlaying ? stopStory : playStory}
-          >
-            <Text style={styles.playText}>{isPlaying ? "⏹ Stop" : "▶️ Play Story"}</Text>
+          <TouchableOpacity style={styles.playBtn} onPress={togglePlayPause}>
+            <Text style={styles.playText}>{isPlaying ? "⏸ Pause" : "▶️ Play"}</Text>
           </TouchableOpacity>
         )}
       </View>
-    </View>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#000" },
-  bg: { ...StyleSheet.absoluteFillObject },
-  topBar: {
-    backgroundColor: "#a3e635",
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  topText: { color: "#000", fontSize: 18, fontWeight: "900" },
-  center: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: { fontSize: 22, fontWeight: "900", color: "#fff", marginBottom: 12 },
-  subtext: { fontSize: 16, color: "#eee", marginBottom: 20 },
+  bg: { flex: 1 },
+  container: { flex: 1, justifyContent: "center", alignItems: "center" },
+  title: { fontSize: 20, fontWeight: "900", marginBottom: 20 },
   playBtn: {
-    backgroundColor: "#22c55e",
-    paddingHorizontal: 40,
+    backgroundColor: "#111",
     paddingVertical: 14,
-    borderRadius: 999,
-    elevation: 4,
+    paddingHorizontal: 40,
+    borderRadius: 30,
   },
-  playText: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  playText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
 });

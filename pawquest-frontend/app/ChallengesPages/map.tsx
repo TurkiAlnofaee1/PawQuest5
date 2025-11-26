@@ -1,28 +1,29 @@
-// app/map.tsx — DB-driven start/end, smart ORS, split route, HUD + Audio
-import AudioBar, { AudioBarHandle } from "../../components/AudioBar";
-import ChallengeHUD from "../../components/ChallengeHUD";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Location from "expo-location";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+// app/ChallengesPages/map.tsx — DB-driven start/end, smart ORS, split route, HUD + Audio
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import {
+  View,
+  Text,
+  StyleSheet,
   ActivityIndicator,
   Alert,
   Animated,
   Easing,
   Image,
-  StyleSheet,
-  Text,
   TouchableOpacity,
-  View,
 } from "react-native";
 import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
+import * as Location from "expo-location";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useLocalSearchParams, useRouter } from "expo-router";
+
+import AudioBar, { AudioBarHandle } from "@/components/AudioBar";
+import ChallengeHUD from "@/components/ChallengeHUD";
 
 // 🔥 Firestore
 import { db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 
-// 🔑 ORS key (unchanged)
+// 🔑 ORS key
 const ORS_API_KEY =
   "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjNhYmYxMzBmODQwNzQ2ODM4Mzk3M2RmNjcyNzExMzAyIiwiaCI6Im11cm11cjY0In0=";
 
@@ -46,13 +47,12 @@ type RunStats = {
 
 type ChallengeDoc = {
   title?: string;
-  // Adjust these if you store as GeoPoint or lat/lng keys:
   start?: { latitude: number; longitude: number };
   end?: { latitude: number; longitude: number };
-  audioUrl?: string; // remote mp3 (optional)
+  audioUrl?: string; // static audio (fallback)
 };
 
-// math helpers
+// helpers
 const haversineM = (a: LatLng, b: LatLng) => {
   const R = 6371e3;
   const φ1 = (a.latitude * Math.PI) / 180;
@@ -64,8 +64,10 @@ const haversineM = (a: LatLng, b: LatLng) => {
     Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
   return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 };
+
 const formatDistance = (m: number) =>
   m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+
 const formatDuration = (s: number) => {
   const min = Math.round(s / 60);
   if (min < 60) return `${min} min`;
@@ -73,6 +75,7 @@ const formatDuration = (s: number) => {
   const m = min % 60;
   return `${h}h ${m}m`;
 };
+
 function nearestRouteIndex(route: LatLng[], you: LatLng): number {
   if (route.length === 0) return 0;
   let bestI = 0;
@@ -91,18 +94,32 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
 
 export default function MapScreen() {
   const router = useRouter();
-  const { challengeId, difficulty } = useLocalSearchParams<{
+  const {
+    challengeId,
+    difficulty,
+    audioUri: audioUriParam,
+    title,
+  } = useLocalSearchParams<{
     challengeId?: string;
     difficulty?: string;
+    audioUri?: string;
+    title?: string;
   }>();
+
   const variantParam =
-    typeof difficulty === "string" && difficulty.toLowerCase() === "hard" ? "hard" : "easy";
+    typeof difficulty === "string" && difficulty.toLowerCase() === "hard"
+      ? "hard"
+      : "easy";
 
   // From DB
-  const [challengeTitle, setChallengeTitle] = useState<string | undefined>(undefined);
+  const [challengeTitle, setChallengeTitle] = useState<string | undefined>(
+    typeof title === "string" ? title : undefined
+  );
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [endPoint, setEndPoint] = useState<LatLng | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
+  const [audioUrlFromDb, setAudioUrlFromDb] = useState<string | undefined>(
+    undefined
+  );
 
   // Map/Location
   const [region, setRegion] = useState<any>(null);
@@ -117,14 +134,20 @@ export default function MapScreen() {
   // Routing
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [summary, setSummary] = useState<RouteSummary | null>(null);
-  const [initialRouteDistanceM, setInitialRouteDistanceM] = useState<number | null>(null);
+  const [initialRouteDistanceM, setInitialRouteDistanceM] = useState<
+    number | null
+  >(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
   // smart fetch
   const lastFetchAtRef = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
-  const runStatsRef = useRef<RunStats>({ startAt: null, distance: 0, lastPoint: null });
+  const runStatsRef = useRef<RunStats>({
+    startAt: null,
+    distance: 0,
+    lastPoint: null,
+  });
 
   // YOU pulse
   const pulse = useRef(new Animated.Value(0)).current;
@@ -138,19 +161,36 @@ export default function MapScreen() {
       })
     ).start();
   }, [pulse]);
-  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.6] });
-  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] });
+  const scale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.6, 1.6],
+  });
+  const opacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.7, 0],
+  });
 
-  // 🎧 audio control
-  const audioRef = useRef<AudioBarHandle>(null);
+  // 🎧 audio control via AudioBar
+  const audioBarRef = useRef<AudioBarHandle>(null);
+  const [showAudioBar, setShowAudioBar] = useState(false);
+
+  // choose final audio URI: AI from challenge > static from DB
+  const audioSourceUri = useMemo(() => {
+    if (typeof audioUriParam === "string" && audioUriParam.length > 0) {
+      return audioUriParam;
+    }
+    if (typeof audioUrlFromDb === "string" && audioUrlFromDb.length > 0) {
+      return audioUrlFromDb;
+    }
+    return null;
+  }, [audioUriParam, audioUrlFromDb]);
 
   // 1) Load challenge from DB
   useEffect(() => {
     let isMounted = true;
     (async () => {
       try {
-        // Require an id in the route: /map?challengeId=abc123
-        const id = challengeId || "default"; // fallback if you want a default doc
+        const id = challengeId || "default";
         const snap = await getDoc(doc(db, "challenges", id));
         if (!snap.exists()) {
           Alert.alert("Not found", "Challenge document does not exist.");
@@ -158,34 +198,47 @@ export default function MapScreen() {
         }
         const data = snap.data() as ChallengeDoc;
 
-        // If using GeoPoint: const gp = data.startGeo as firebase.firestore.GeoPoint;
-        // setStartPoint({ latitude: gp.latitude, longitude: gp.longitude });
         if (data.start && data.end) {
-          const s = { latitude: data.start.latitude, longitude: data.start.longitude };
-          const e = { latitude: data.end.latitude, longitude: data.end.longitude };
+          const s = {
+            latitude: data.start.latitude,
+            longitude: data.start.longitude,
+          };
+          const e = {
+            latitude: data.end.latitude,
+            longitude: data.end.longitude,
+          };
           if (!isMounted) return;
           setStartPoint(s);
           setEndPoint(e);
         } else {
-          Alert.alert("Invalid data", "Challenge is missing start/end coordinates.");
+          Alert.alert(
+            "Invalid data",
+            "Challenge is missing start/end coordinates."
+          );
         }
 
         if (isMounted) {
-          setChallengeTitle(data.title);
-          setAudioUrl(data.audioUrl);
+          if (!challengeTitle && data.title) {
+            setChallengeTitle(data.title);
+          }
+          setAudioUrlFromDb(data.audioUrl);
         }
       } catch (e: any) {
         Alert.alert("DB error", e?.message ?? "Failed to load challenge.");
       }
     })();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [challengeId]);
 
-  // 2) Start fresh (avoid showing old route before Start) — key per challenge
+  // 2) Start fresh (avoid old route)
   const cacheKey = `route:${challengeId || "default"}`;
   useEffect(() => {
-    AsyncStorage.multiRemove([`${cacheKey}:coords`, `${cacheKey}:summary`]).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    AsyncStorage.multiRemove([
+      `${cacheKey}:coords`,
+      `${cacheKey}:summary`,
+    ]).catch(() => {});
   }, [cacheKey]);
 
   // 3) Permissions + watcher (start after we have DB points)
@@ -198,7 +251,10 @@ export default function MapScreen() {
       if (status !== "granted") return;
 
       const loc = await Location.getCurrentPositionAsync({});
-      const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      const coords = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      };
       setUserLocation(coords);
       setRegion({
         latitude: coords.latitude,
@@ -212,7 +268,10 @@ export default function MapScreen() {
           ? { accuracy: Location.Accuracy.Highest, distanceInterval: 3 }
           : { accuracy: Location.Accuracy.Balanced, distanceInterval: 8 },
         (newLoc) => {
-          const c = { latitude: newLoc.coords.latitude, longitude: newLoc.coords.longitude };
+          const c = {
+            latitude: newLoc.coords.latitude,
+            longitude: newLoc.coords.longitude,
+          };
           setUserLocation(c);
 
           if (startPoint) setNearStart(haversineM(c, startPoint) < PROXIMITY_M);
@@ -241,19 +300,33 @@ export default function MapScreen() {
         }
       );
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [challengeStarted, startPoint?.latitude, startPoint?.longitude, endPoint?.latitude, endPoint?.longitude]);
+  }, [
+    challengeStarted,
+    startPoint?.latitude,
+    startPoint?.longitude,
+    endPoint?.latitude,
+    endPoint?.longitude,
+  ]);
 
   // periodic refresh
   useEffect(() => {
     if (!challengeStarted || !userLocation || !endPoint) return;
-    const t = setInterval(() => fetchRouteSafe(userLocation, endPoint), RECALC_TIMER_SEC * 1000);
+    const t = setInterval(
+      () => fetchRouteSafe(userLocation, endPoint),
+      RECALC_TIMER_SEC * 1000
+    );
     return () => clearInterval(t);
-  }, [challengeStarted, userLocation?.latitude, userLocation?.longitude, endPoint?.latitude, endPoint?.longitude]);
+  }, [
+    challengeStarted,
+    userLocation?.latitude,
+    userLocation?.longitude,
+    endPoint?.latitude,
+    endPoint?.longitude,
+  ]);
 
   // auto-stop audio near end
   useEffect(() => {
-    if (challengeStarted && nearEnd) audioRef.current?.fadeOut();
+    if (challengeStarted && nearEnd) audioBarRef.current?.fadeOut();
   }, [challengeStarted, nearEnd]);
 
   // reset route UI if stop
@@ -263,6 +336,7 @@ export default function MapScreen() {
       setSummary(null);
       setInitialRouteDistanceM(null);
       lastRouteOriginRef.current = null;
+      setShowAudioBar(false);
     }
   }, [challengeStarted]);
 
@@ -302,11 +376,15 @@ export default function MapScreen() {
       const json = await res.json();
       const coordsLL: LatLng[] =
         json?.features?.[0]?.geometry?.coordinates?.map(
-          (pt: [number, number]) => ({ latitude: pt[1], longitude: pt[0] })
+          (pt: [number, number]) => ({
+            latitude: pt[1],
+            longitude: pt[0],
+          })
         ) ?? [];
       const seg = json?.features?.[0]?.properties?.segments?.[0];
       const sum = json?.features?.[0]?.properties?.summary;
-      const nextInstruction: string | undefined = seg?.steps?.[0]?.instruction || undefined;
+      const nextInstruction: string | undefined =
+        seg?.steps?.[0]?.instruction || undefined;
 
       if (coordsLL.length > 1 && sum) {
         setRouteCoords(coordsLL);
@@ -333,7 +411,8 @@ export default function MapScreen() {
         } catch {}
       }
     } catch (e: any) {
-      if (e?.name !== "AbortError") console.log("ORS fetch failed", e?.message ?? e);
+      if (e?.name !== "AbortError")
+        console.log("ORS fetch failed", e?.message ?? e);
     } finally {
       if (abortRef.current === ac) abortRef.current = null;
       setRouteLoading(false);
@@ -366,11 +445,23 @@ export default function MapScreen() {
     );
   }
 
-  // Build audio source (allow remote or fallback local asset)
-  const audioSource =
-    audioUrl && audioUrl.startsWith("http")
-      ? { uri: audioUrl }
-      : require("../../assets/audio/track.mp3");
+  const handleStartChallenge = async () => {
+    setChallengeStarted(true);
+    runStatsRef.current = {
+      startAt: Date.now(),
+      distance: 0,
+      lastPoint: userLocation ?? null,
+    };
+    if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
+
+    // 🎧 Only now show and play audio if available
+    if (audioSourceUri) {
+      setShowAudioBar(true);
+      setTimeout(() => {
+        audioBarRef.current?.play();
+      }, 400);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -384,17 +475,27 @@ export default function MapScreen() {
         )}
 
         <Marker coordinate={startPoint} title="Start">
-          <Image source={require("../../assets/images/start-flag.png")} style={styles.icon} />
+          <Image
+            source={require("../../assets/images/start-flag.png")}
+            style={styles.icon}
+          />
         </Marker>
         <Marker coordinate={endPoint} title="Goal">
-          <Image source={require("../../assets/images/End_Point.png")} style={styles.icon} />
+          <Image
+            source={require("../../assets/images/End_Point.png")}
+            style={styles.icon}
+          />
         </Marker>
 
         {/* YOU marker with pulsing aura */}
         <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }} zIndex={999}>
           <View style={{ alignItems: "center" }}>
-            <Animated.View style={[styles.pulseCircle, { transform: [{ scale }], opacity }]} />
-            <View style={styles.youBubble}><Text style={styles.youText}>YOU</Text></View>
+            <Animated.View
+              style={[styles.pulseCircle, { transform: [{ scale }], opacity }]}
+            />
+            <View style={styles.youBubble}>
+              <Text style={styles.youText}>YOU</Text>
+            </View>
           </View>
         </Marker>
       </MapView>
@@ -403,66 +504,78 @@ export default function MapScreen() {
       {challengeStarted && (
         <ChallengeHUD
           mode={nearEnd ? "complete" : "active"}
-          distanceText={remainingM !== null ? formatDistance(remainingM) : "—"}
+          distanceText={
+            remainingM !== null ? formatDistance(remainingM) : "—"
+          }
           timeText={summary ? formatDuration(summary.durationS) : "—"}
           progress={progress}
           instruction={summary?.nextInstruction}
           loading={routeLoading}
           onCapture={() => {
-            audioRef.current?.fadeOut();
+            audioBarRef.current?.fadeOut();
             const stats = runStatsRef.current;
             const durationSec =
-              stats.startAt !== null ? Math.max(0, Math.round((Date.now() - stats.startAt) / 1000)) : null;
+              stats.startAt !== null
+                ? Math.max(
+                    0,
+                    Math.round((Date.now() - stats.startAt) / 1000)
+                  )
+                : null;
             let distanceM = stats.distance;
             if (stats.lastPoint && userLocation) {
               const tail = haversineM(stats.lastPoint, userLocation);
               if (Number.isFinite(tail)) distanceM += tail;
             }
             const roundedDistance =
-              Number.isFinite(distanceM) && distanceM > 0 ? Math.round(distanceM) : null;
+              Number.isFinite(distanceM) && distanceM > 0
+                ? Math.round(distanceM)
+                : null;
 
             const baseParams: Record<string, string> = {};
             if (variantParam) baseParams.variant = variantParam;
             if (challengeTitle) baseParams.title = challengeTitle;
-            if (durationSec !== null) baseParams.durationSec = String(durationSec);
-            if (roundedDistance !== null) baseParams.distanceM = String(roundedDistance);
+            if (durationSec !== null)
+              baseParams.durationSec = String(durationSec);
+            if (roundedDistance !== null)
+              baseParams.distanceM = String(roundedDistance);
 
             if (challengeId) {
-              baseParams.challengeId = challengeId;
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
-            } else {
-              router.push({ pathname: "/ChallengesPages/ARPetScreen", params: baseParams });
+              baseParams.challengeId = String(challengeId);
             }
+
+            router.push({
+              pathname: "/ChallengesPages/ARPetScreen",
+              params: baseParams,
+            });
           }}
         />
       )}
 
-      {/* Start only when inside 20 m of start */}
+      {/* Start only when inside start radius */}
       {!challengeStarted && nearStart && (
         <TouchableOpacity
           style={styles.startBtn}
-          onPress={async () => {
-            setChallengeStarted(true);
-            runStatsRef.current = {
-              startAt: Date.now(),
-              distance: 0,
-              lastPoint: userLocation ?? null,
-            };
-            audioRef.current?.play();
-            if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
-          }}
+          onPress={handleStartChallenge}
         >
-          <Text style={styles.btnText}>Start {challengeTitle ? `– ${challengeTitle}` : "Challenge"}</Text>
+          <Text style={styles.btnText}>
+            Start {challengeTitle ? `– ${challengeTitle}` : "Challenge"}
+          </Text>
         </TouchableOpacity>
       )}
 
-      {/* Bottom audio bar — only after Start */}
-      <AudioBar
-        ref={audioRef}
-        title={challengeTitle || "The Lost Letter"}
-        source={audioSource}
-        visible={challengeStarted}
-      />
+      {/* Bottom audio bar — only after Start + if audio exists */}
+      {audioSourceUri && (
+        <AudioBar
+          ref={audioBarRef}
+          title={
+            typeof title === "string" && title.length > 0
+              ? title
+              : "Story Audio"
+          }
+          source={{ uri: audioSourceUri }}
+          visible={showAudioBar}
+        />
+      )}
     </View>
   );
 }
