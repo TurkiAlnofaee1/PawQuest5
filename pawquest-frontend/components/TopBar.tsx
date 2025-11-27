@@ -1,46 +1,63 @@
-// components/TopBar.tsx
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { useRouter, type Href } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React from "react";
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 
-type Props = {
-  title: string;
-  /** A valid Expo Router path (must exist in /app). Example: "/(tabs)/settings" */
-  backTo?: Href;
-};
-
-export default function TopBar({ title, backTo }: Props) {
-  const insets = useSafeAreaInsets();
+export default function GreenTopBar({ title }: { title: string }) {
   const router = useRouter();
 
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top || 12 }]}>
-      <TouchableOpacity
-        onPress={() => (backTo ? router.replace(backTo) : router.back())}
-        style={styles.backBtn}
-        accessibilityLabel="Go back"
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Ionicons name="arrow-back" size={22} color="#000" />
-      </TouchableOpacity>
+    <View style={styles.container}>
+      <View style={styles.row}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={24} color="#0B3D1F" />
+        </TouchableOpacity>
 
-      <Text style={styles.title} numberOfLines={1}>
-        {title}
-      </Text>
+        <Text style={styles.title}>{title}</Text>
+
+        {/* Empty view to balance layout (center title) */}
+        <View style={{ width: 40 }} />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    backgroundColor: '#cbeeaa',
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
+  container: {
+    backgroundColor: "#0E4A24", // dark green like screenshot
+    paddingTop: Platform.OS === "ios" ? 60 : 24,
+    paddingBottom: 18,
+    paddingHorizontal: 16,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  backBtn: { marginRight: 8, padding: 6, borderRadius: 8 },
-  title: { fontSize: 18, fontWeight: '900', color: '#000' },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#DFF5D8", // light green circle
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 20,
+    fontWeight: "900",
+    color: "white",
+    marginLeft: -40, // pushes title perfectly to center
+  },
 });

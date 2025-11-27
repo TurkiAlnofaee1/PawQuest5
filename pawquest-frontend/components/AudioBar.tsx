@@ -13,11 +13,13 @@ export type AudioBarHandle = {
   play: () => Promise<void>;
   pause: () => Promise<void>;
   fadeOut: (ms?: number) => Promise<void>;
+  loadNewAudio: (uri: string) => Promise<void>;   // ✅ ADDED
+  stopAudio: () => Promise<void>;                 // ✅ ADDED
 };
 
 type Props = {
   title: string;
-  source?: AVPlaybackSource; // { uri: string } or require("...mp3")
+  source?: AVPlaybackSource;
   visible: boolean;
   controlledState?: {
     isPlaying: boolean;
@@ -29,127 +31,143 @@ type Props = {
 
 const AudioBar = forwardRef<AudioBarHandle, Props>(
   ({ title, source, visible, controlledState }, ref) => {
+
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
-  const slideY = useRef(new Animated.Value(80)).current; // slide in/out
+  const slideY = useRef(new Animated.Value(80)).current;
   const isControlled = Boolean(controlledState);
 
-  // slide in/out on visible
+  /* ---------------------- SLIDE IN/OUT ---------------------- */
   useEffect(() => {
     Animated.timing(slideY, {
       toValue: visible ? 0 : 80,
       duration: 250,
       useNativeDriver: true,
     }).start();
-  }, [visible, slideY]);
+  }, [visible]);
 
-  // Configure audio mode once
+  /* ---------------------- AUDIO MODE ---------------------- */
   useEffect(() => {
     Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
       staysActiveInBackground: false,
-      interruptionModeIOS: InterruptionModeIOS.DuckOthers,
       playsInSilentModeIOS: true,
       shouldDuckAndroid: true,
+      interruptionModeIOS: InterruptionModeIOS.DuckOthers,
       interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-      playThroughEarpieceAndroid: false,
     }).catch(() => {});
   }, []);
 
+  /* ---------------------- LOAD IF NEEDED ---------------------- */
   const loadIfNeeded = async () => {
     if (isControlled || !source) return;
     if (soundRef.current) return;
+
     const { sound } = await Audio.Sound.createAsync(source, {
-      volume: volume,
+      volume,
       shouldPlay: false,
-      progressUpdateIntervalMillis: 250,
     });
+
     soundRef.current = sound;
     setIsLoaded(true);
+
     sound.setOnPlaybackStatusUpdate((status) => {
       if (!status.isLoaded) return;
       setIsPlaying(status.isPlaying);
-      // keep local volume state in sync if needed
     });
   };
 
+  /* ---------------------- PLAY ---------------------- */
   const play = async () => {
-    if (isControlled && controlledState) {
-      controlledState.onPlay();
-      return;
-    }
+    if (isControlled && controlledState) return controlledState.onPlay();
     await loadIfNeeded();
     if (!soundRef.current) return;
+
     await soundRef.current.setVolumeAsync(1);
     setVolume(1);
+
     await soundRef.current.playAsync();
   };
 
+  /* ---------------------- PAUSE ---------------------- */
   const pause = async () => {
-    if (isControlled && controlledState) {
-      controlledState.onPause();
-      return;
-    }
+    if (isControlled && controlledState) return controlledState.onPause();
     if (!soundRef.current) return;
+
     await soundRef.current.pauseAsync();
   };
 
+  /* ---------------------- FADE OUT ---------------------- */
   const fadeOut = async (ms = 1200) => {
-    if (isControlled && controlledState) {
-      controlledState.onPause();
-      return;
-    }
     if (!soundRef.current) return;
     try {
       const steps = 12;
-      const stepMs = Math.max(30, Math.floor(ms / steps));
       for (let i = steps; i >= 0; i--) {
-        const v = i / steps;
-        await soundRef.current.setVolumeAsync(v);
-        await new Promise((r) => setTimeout(r, stepMs));
+        await soundRef.current.setVolumeAsync(i / steps);
+        await new Promise((r) => setTimeout(r, ms / steps));
       }
       await soundRef.current.stopAsync();
       await soundRef.current.setPositionAsync(0);
       await soundRef.current.setVolumeAsync(1);
-      setVolume(1);
     } catch {}
   };
 
-  // expose handle
-  useImperativeHandle(ref, () => ({ play, pause, fadeOut }));
+  /* ---------------------- NEW: loadNewAudio(uri) ---------------------- */
+  const loadNewAudio = async (uri: string) => {
+    try {
+      // Stop old
+      try { await soundRef.current?.stopAsync(); } catch {}
+      try { await soundRef.current?.unloadAsync(); } catch {}
 
-  // cleanup
+      const s = new Audio.Sound();
+      await s.loadAsync({ uri }, { shouldPlay: false });
+
+      soundRef.current = s;
+      setIsLoaded(true);
+      setIsPlaying(false);
+
+      s.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded) setIsPlaying(status.isPlaying);
+      });
+
+    } catch (err) {
+      console.log("loadNewAudio error:", err);
+    }
+  };
+
+  /* ---------------------- NEW: stopAudio() ---------------------- */
+  const stopAudio = async () => {
+    try { await soundRef.current?.stopAsync(); } catch {}
+    try { await soundRef.current?.setPositionAsync(0); } catch {}
+    setIsPlaying(false);
+  };
+
+  /* ---------------------- HANDLE REF ---------------------- */
+  useImperativeHandle(ref, () => ({
+    play,
+    pause,
+    fadeOut,
+    loadNewAudio,   // ✅ ADDED
+    stopAudio,      // ✅ ADDED
+  }));
+
+  /* ---------------------- CLEANUP ---------------------- */
   useEffect(() => {
     return () => {
-      (async () => {
-        if (soundRef.current) {
-          try {
-            await soundRef.current.unloadAsync();
-          } catch {}
-          soundRef.current = null;
-        }
-      })();
+      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
     };
   }, []);
 
   if (!visible) return null;
 
   return (
-    <Animated.View
-      style={[
-        styles.wrap,
-        { transform: [{ translateY: slideY }] },
-      ]}
-    >
+    <Animated.View style={[styles.wrap, { transform: [{ translateY: slideY }] }]}>
       <View style={styles.bar}>
         <TouchableOpacity
-          onPress={() =>
-            (isControlled ? controlledState?.isPlaying : isPlaying) ? pause() : play()
-          }
+          onPress={() => ((isControlled ? controlledState?.isPlaying : isPlaying) ? pause() : play())}
           style={styles.btn}
-          activeOpacity={0.8}
         >
           <Ionicons
             name={(isControlled ? controlledState?.isPlaying : isPlaying) ? "pause" : "play"}
@@ -170,13 +188,10 @@ const AudioBar = forwardRef<AudioBarHandle, Props>(
       </View>
     </Animated.View>
   );
-},
-);
+});
 
 export default AudioBar;
-
-// Add a display name for better DevTools and to satisfy eslint/react/display-name
-AudioBar.displayName = 'AudioBar';
+AudioBar.displayName = "AudioBar";
 
 const styles = StyleSheet.create({
   wrap: {
@@ -193,10 +208,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
   },
   btn: {
     width: 40,

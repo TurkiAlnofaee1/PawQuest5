@@ -1,5 +1,10 @@
 {
   "plugins": [
     "expo-router"
-  ]
+  ],
+
+  "expo": {
+    "entryPoint": "./node_modules/expo/AppEntry.js"
+  }
 }
+

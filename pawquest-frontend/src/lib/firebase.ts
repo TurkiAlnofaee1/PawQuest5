@@ -2,23 +2,8 @@
 
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getAuth, initializeAuth } from 'firebase/auth';
-import { getStorage } from 'firebase/storage';
-// getReactNativePersistence is provided by firebase in react-native environments,
-// but importing it statically can trigger TS errors in web environments. Load it
-// dynamically and fall back if not available.
-let getReactNativePersistence: any | undefined;
-try {
-  // dynamic import: in RN environments this module is available
-  // we keep it dynamic to avoid bundling issues on web
-  // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-  const mod = require('firebase/auth/react-native');
-  getReactNativePersistence = mod?.getReactNativePersistence;
-} catch (_e) {
-  getReactNativePersistence = undefined;
-}
-// AsyncStorage for React Native persistence
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuth } from 'firebase/auth';
+import { getStorage } from "firebase/storage";  // <-- add this line
 
 // Firebase configuration using environment variables for security
 const firebaseConfig = {
@@ -29,7 +14,7 @@ const firebaseConfig = {
   storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase
@@ -37,21 +22,11 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore
 export const db = getFirestore(app);
+
+// Initialize Storage (new)
 export const storage = getStorage(app);
 
-// Initialize Auth with React Native persistence when available.
-// On web or in environments where initializeAuth fails, fall back to getAuth(app).
-let authInstance;
-try {
-  // initializeAuth attaches React Native persistence
-  authInstance = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage as any),
-  });
-} catch (_e) {
-  // Fallback (e.g., web) — use getAuth
-  authInstance = getAuth(app);
-}
-
-export const auth = authInstance;
+// Initialize Auth (optional)
+export const auth = getAuth(app);
 
 export default app;

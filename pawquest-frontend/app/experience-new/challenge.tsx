@@ -1,12 +1,5 @@
 // app/experience-new/challenge.tsx
-
-// ---- Cloudinary env (Unsigned upload) ----
-const CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME!;
-const UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UNSIGNED_PRESET!;
-// ---- OpenRouteService env (walking directions) ----
-const ORS_API_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY!;
-
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -15,331 +8,195 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Image,
   Platform,
+  ActivityIndicator,
+  Modal,
   Alert,
-} from 'react-native';
-import TopBar from '@/components/TopBar';
-import ExperienceSegment from '@/components/ExperienceSegment';
-import MapView, {
-  Marker,
-  Polyline,
-  Region,
-  LatLng,
-  type LongPressEvent,
-} from 'react-native-maps';
-import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
+} from "react-native";
+import TopBar from "../../components/TopBar";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { db } from "../../src/lib/firebase";
+import { BlurView } from "expo-blur";
+import { Buffer } from "buffer";
 
-// ✅ Firestore helper + type
-import { createChallenge, type Category } from '../../src/lib/experience';
-// ✅ ORS helper (shared)
-import { fetchWalkingRoute } from '@/src/lib/ors';
+const bgImage = require("../../assets/images/ImageBackground.jpg");
 
-const bgImage = require('../../assets/images/ImageBackground.jpg');
-
-const CATEGORY_COLORS: Record<Category, string> = {
-  City: '#9ed0ff',
-  Mountain: '#ffb3b3',
-  Desert: '#ffd58a',
-  Sea: '#8fd2ff',
+const CATEGORY_COLORS: Record<"City" | "Mountain" | "Desert" | "Sea", string> = {
+  City: "#9ed0ff",
+  Mountain: "#ffb3b3",
+  Desert: "#ffd58a",
+  Sea: "#8fd2ff",
 };
-
-const INITIAL_REGION: Region = {
-  latitude: 21.543333,
-  longitude: 39.172779,
-  latitudeDelta: 0.05,
-  longitudeDelta: 0.05,
-};
-
-// ---- upload a file URI to Cloudinary (unsigned) ----
-async function uploadToCloudinary(uri: string): Promise<string> {
-  const form = new FormData();
-  form.append('file', { uri, type: 'image/*', name: 'pet.jpg' } as any);
-  form.append('upload_preset', UPLOAD_PRESET);
-  form.append('folder', 'pawquest/pets');
-
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
-    method: 'POST',
-    body: form,
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error?.message ?? 'Cloudinary upload failed');
-  return json.secure_url as string;
-}
-
-type Difficulty = 'easy' | 'hard';
 
 export default function ChallengeFormScreen() {
-  // form state
-  const [name, setName] = useState('');
-  const [points, setPoints] = useState('');
-  const [rewardName, setRewardName] = useState('');
-  const [category, setCategory] = useState<Category>('City');
-  const [saving, setSaving] = useState(false);
+  // kept for layout
+  const [name, setName] = useState("");
+  const [loc1, setLoc1] = useState("");
+  const [duration, setDuration] = useState("");
+  const [points, setPoints] = useState("");
+  const [reward, setReward] = useState("");
+  const [category, setCategory] = useState<"City" | "Mountain" | "Desert" | "Sea">("City");
 
-  // map picking
-  const [start, setStart] = useState<LatLng | null>(null);
-  const [end, setEnd] = useState<LatLng | null>(null);
-  const [region, setRegion] = useState<Region>(INITIAL_REGION);
+  // story flow
+  const [script, setScript] = useState("");        // user input area
+  const [accepted, setAccepted] = useState(false); // lock after Accept
+  const [loading, setLoading] = useState(false);
 
-  // walking route & metrics (from ORS)
-  const [routeCoords, setRouteCoords] = useState<LatLng[] | null>(null);
-  const [distanceMeters, setDistanceMeters] = useState<number | undefined>(undefined);
-  const [estimatedTimeMin, setEstimatedTimeMin] = useState<number | undefined>(undefined);
+  // AI result modal
+  const [genTitle, setGenTitle] = useState("");
+  const [genStory, setGenStory] = useState("");
+  const [modalVisible, setModalVisible] = useState(false);
 
-  // “YOU” marker location (after locate me)
-  const [you, setYou] = useState<LatLng | null>(null);
+  // Gemini
+  const genAI = useMemo(
+    () => new GoogleGenerativeAI(process.env.EXPO_PUBLIC_GEMINI_API_KEY || ""),
+    []
+  );
+  const model = useMemo(
+    () => genAI.getGenerativeModel({ model: "models/gemini-flash-latest" }),
+    [genAI]
+  );
 
-  // pet image (suggested reward image)
-  const [petImageUri, setPetImageUri] = useState<string | null>(null);
-
-  // Difficulty selection: start as not selected
-  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
-
-  // ───────────────── helpers ─────────────────
-  const onMapLongPress = async (e: LongPressEvent) => {
-    const coord = e.nativeEvent.coordinate;
-    if (!start) {
-      setStart(coord);
-      setEnd(null);
-      setRouteCoords(null);
-      setDistanceMeters(undefined);
-      setEstimatedTimeMin(undefined);
-      setDifficulty(null); // reset selection on new route
-    } else if (!end) {
-      setEnd(coord);
-      try {
-        await getSnappedRoute(start, coord);
-      } catch (err: any) {
-        console.warn('ORS error:', err?.message ?? err);
-        Alert.alert('Route error', 'Could not fetch walking route.');
-        setRouteCoords(null);
-      }
-    } else {
-      // restart sequence
-      setStart(coord);
-      setEnd(null);
-      setRouteCoords(null);
-      setDistanceMeters(undefined);
-      setEstimatedTimeMin(undefined);
-      setDifficulty(null);
-    }
-  };
-
-  // Uses '@/src/lib/ors' to fetch a snapped walking route and update state
-  async function getSnappedRoute(start: LatLng, end: LatLng) {
-    try {
-      const { feature, distanceMeters, durationSec } = await fetchWalkingRoute(start, end);
-      const coords = feature.geometry.coordinates.map(([lon, lat]: [number, number]) => ({
-        latitude: lat,
-        longitude: lon,
-      }));
-      setRouteCoords(coords);
-      if (distanceMeters != null) setDistanceMeters(Math.round(distanceMeters));
-      if (durationSec != null) setEstimatedTimeMin(Math.max(1, Math.round(durationSec / 60)));
-    } catch (err: any) {
-      console.warn('ORS error:', err?.message ?? err);
-      Alert.alert('Route error', String(err?.message ?? 'Failed to fetch walking route.'));
-      setRouteCoords(null);
-    }
-  }
-
-  const clearPoints = () => {
-    setStart(null);
-    setEnd(null);
-    setRouteCoords(null);
-    setDistanceMeters(undefined);
-    setEstimatedTimeMin(undefined);
-    setDifficulty(null);
-  };
-
-  const locateMe = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Location', 'Permission is required to center the map.');
+  // -------- AI Generate --------
+  const handleGenerate = async () => {
+    if (!script.trim()) {
+      Alert.alert("Write your idea", "Please type a short idea under Story Script first.");
       return;
     }
-    const pos = await Location.getCurrentPositionAsync({});
-    const me: LatLng = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-    setYou(me);
-    setRegion({
-      latitude: me.latitude,
-      longitude: me.longitude,
-      latitudeDelta: 0.01,
-      longitudeDelta: 0.01,
-    });
-  };
+    setLoading(true);
+    setAccepted(false);
 
-  const pickPetPhoto = async () => {
     try {
-      if (Platform.OS !== 'web') {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-          alert('Permission to access photos is required!');
-          return;
-        }
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.9,
-      });
-      if (!result.canceled) {
-        setPetImageUri(result.assets[0].uri);
-      }
+      const prompt = `
+You are writing for a running app. Expand the user's short idea into a full, motivational running story.
+
+Requirements:
+- Keep total output well under 1 MB.
+- Produce a short engaging TITLE and a STORY.
+- Insert energetic, high-motivation lines roughly every 3 minutes (e.g., "Drive your knees—you're flying!").
+- Use a firm, energetic “coach” tone for motivation lines.
+- English.
+
+User idea:
+"${script}"
+
+Return EXACTLY in this format:
+Title: <short title>
+Story:
+<story text here>
+      `.trim();
+
+      const res = await model.generateContent([{ text: prompt } as any]);
+      const txt = res.response.text().trim();
+
+      const m = txt.match(/Title:\s*(.+)\n+Story:\s*([\s\S]*)/i);
+      const title = (m?.[1] || "Untitled Story").trim();
+      const body = (m?.[2] || txt).trim();
+
+      setGenTitle(title);
+      setGenStory(body);
+      setModalVisible(true);
     } catch (e: any) {
-      console.warn('ImagePicker error:', e?.message ?? e);
-      alert('Could not open image picker.');
-    }
-  };
-
-  // --- Derived durations (from estimatedTimeMin) ---
-  const baseMin = useMemo(() => Math.max(1, Math.round(estimatedTimeMin ?? 10)), [estimatedTimeMin]);
-  const easyMin = useMemo(() => baseMin + 2, [baseMin]);
-  const hardMin = useMemo(() => Math.max(1, Math.ceil(baseMin / 2)), [baseMin]);
-  const adjustedMin = difficulty === 'easy' ? easyMin : difficulty === 'hard' ? hardMin : null;
-
-  // ───────────────── submit ─────────────────
-  const onSubmit = async () => {
-    if (saving) return;
-
-    if (!name.trim() || !start || !end) {
-      Alert.alert('Missing info', 'Please enter a name and pick Start & End on the map.');
-      return;
-    }
-    if (!difficulty) {
-      Alert.alert('Pick difficulty', 'Please choose Easy or Hard.');
-      return;
-    }
-    if (adjustedMin == null) {
-      Alert.alert('Route missing', 'Please generate a route to compute duration.');
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      let rewardImageUrl: string | undefined;
-      if (petImageUri) {
-        try {
-          rewardImageUrl = await uploadToCloudinary(petImageUri);
-        } catch (err: any) {
-          Alert.alert('Upload failed', err?.message ?? 'Could not upload image');
-        }
-      }
-
-      // ✅ Save ONLY the chosen difficulty & its adjusted duration
-      await createChallenge({
-        name: name.trim(),
-        category,
-        pointsReward: Number(points) || 0,
-        durationMinutes: baseMin,          // keep base route estimate
-        suggestedReward: rewardName.trim() || '',
-        createdBy: 'demo',
-        start,
-        end,
-        distanceMeters,
-        estimatedTimeMin: baseMin,
-        difficulty,                        // 'easy' | 'hard'
-        adjustedDurationMin: adjustedMin,  // only the chosen value
-        rewardImageUrl,
-      });
-
-      Alert.alert('Success', 'Challenge saved!');
-      // reset
-      setName('');
-      setPoints('');
-      setRewardName('');
-      setCategory('City');
-      clearPoints();
-      setPetImageUri(null);
-      setDifficulty(null);
-    } catch (e: any) {
-      Alert.alert('Failed to save', String(e?.message ?? e));
+      console.error("AI error:", e?.message ?? e);
+      Alert.alert("AI Error", "Failed to generate story. Please try again.");
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
 
-  // ───────────────── UI ─────────────────
+  // -------- Accept / Regenerate --------
+  const handleAccept = () => {
+    setAccepted(true);
+    setModalVisible(false);
+    setScript("Story accepted ✅"); // lock indicator
+  };
+
+  const handleRegenerate = async () => {
+    setModalVisible(false);
+    await handleGenerate();
+  };
+
+  // -------- Submit (save to Firestore) --------
+  const handleSubmit = async () => {
+    if (!accepted) {
+      Alert.alert("Not accepted yet", "Generate a story and press Accept before submitting.");
+      return;
+    }
+    if (!genStory.trim()) {
+      Alert.alert("Missing story", "No generated story found.");
+      return;
+    }
+
+    // lightweight “audio” placeholder (swap with real TTS later)
+    const audioBase64 = Buffer.from(genStory, "utf8").toString("base64");
+
+    try {
+      await addDoc(collection(db, "ChallengeCreateor"), {
+        name: "Challenge & Story",
+        category,
+        title: genTitle,
+        text: genStory,
+        audioBase64,
+        duration: duration || null,
+        points: points || null,
+        createdAt: serverTimestamp(),
+      });
+
+      Alert.alert("✅ Saved", "Story and audio placeholder saved to Firebase.");
+
+      // optional reset
+      setName("");
+      setLoc1("");
+      setDuration("");
+      setPoints("");
+      setReward("");
+      setScript("");
+      setAccepted(false);
+      setGenStory("");
+      setGenTitle("");
+    } catch (e: any) {
+      console.error("Save error:", e?.message ?? e);
+      Alert.alert("Save error", "Could not save to Firebase. Check config/permissions.");
+    }
+  };
+
   return (
     <View style={styles.root}>
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
-      <TopBar title="Create a Challenge +" backTo="/(tabs)/settings" />
+      <TopBar title="Create a Challenge  +" backTo="/(tabs)/settings" />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <ExperienceSegment current="challenge" />
         <Text style={styles.formTitle}>Add Challenge</Text>
 
-        {/* Name */}
-        <Text style={styles.label}>Name</Text>
-        <TextInput
-          style={[styles.input, styles.elevated]}
-          placeholder="Example: The Ride"
-          placeholderTextColor="#6A6A6A"
-          value={name}
-          onChangeText={setName}
-        />
-
-        {/* Location picker */}
-        <Text style={styles.label}>Location</Text>
-        <Text style={styles.helperText}>
-          Long-press once to set <Text style={{ fontWeight: '800' }}>Start</Text>, long-press again to set{' '}
-          <Text style={{ fontWeight: '800' }}>End</Text>.{'\n'}
-          Use “Locate me” to move the map to your position. Tap “Clear” to restart.
-        </Text>
-
-        <View style={styles.mapWrap}>
-          <MapView
-            style={styles.map}
-            initialRegion={region}
-            region={region}
-            onRegionChangeComplete={setRegion}
-            onLongPress={onMapLongPress}
-          >
-            {/* YOU marker with pulsing circle + label */}
-            {you && (
-              <Marker coordinate={you} anchor={{ x: 0.5, y: 0.5 }}>
-                <View style={styles.youWrap}>
-                  <View style={styles.youPulse} />
-                  <View style={styles.youBadge}>
-                    <Text style={styles.youText}>YOU</Text>
-                  </View>
-                </View>
-              </Marker>
-            )}
-
-            {start && <Marker coordinate={start} title="Start" pinColor="#1fbf6b" />}
-            {end && <Marker coordinate={end} title="End" pinColor="#ff5a5f" />}
-
-            {/* Street-aligned route */}
-            {routeCoords && routeCoords.length > 1 && (
-              <Polyline coordinates={routeCoords} strokeWidth={6} />
-            )}
-          </MapView>
-
-          <View style={styles.mapActions}>
-            <TouchableOpacity style={styles.actionBtn} onPress={locateMe}>
-              <Text style={styles.actionBtnText}>Locate me</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtnDark} onPress={clearPoints}>
-              <Text style={styles.actionBtnTextLight}>Clear</Text>
-            </TouchableOpacity>
+        {/* Name | Location */}
+        <View style={styles.row}>
+          <View style={styles.col}>
+            <Text style={styles.label}>Name</Text>
+            <TextInput
+              style={[styles.input, styles.elevated]}
+              placeholder="Example: The ride"
+              placeholderTextColor="#6A6A6A"
+              value={name}
+              onChangeText={setName}
+            />
           </View>
-
-          {(distanceMeters || estimatedTimeMin) && (
-            <Text style={styles.metricsText}>
-              {distanceMeters ? `${(distanceMeters / 1000).toFixed(2)} km` : ''}{' '}
-              {estimatedTimeMin ? `• ~${estimatedTimeMin} min (walking)` : ''}
-            </Text>
-          )}
+          <View style={styles.col}>
+            <Text style={styles.label}>Location</Text>
+            <TextInput
+              style={[styles.input, styles.elevated]}
+              placeholder="Example: Al-Safaa"
+              placeholderTextColor="#6A6A6A"
+              value={loc1}
+              onChangeText={setLoc1}
+            />
+          </View>
         </View>
 
         {/* Category chips */}
-        <Text style={[styles.label, { marginTop: 8 }]}>Challenge Category</Text>
+        <Text style={[styles.label, { marginTop: 6 }]}>Story Category</Text>
         <View style={styles.chipsRow}>
-          {(['City', 'Mountain', 'Desert', 'Sea'] as const).map((t) => {
+          {(["City", "Mountain", "Desert", "Sea"] as const).map((t) => {
             const selected = category === t;
             return (
               <TouchableOpacity
@@ -352,187 +209,180 @@ export default function ChallengeFormScreen() {
                 ]}
                 activeOpacity={0.9}
               >
-                <Text style={[styles.chipText, selected && { color: '#000' }]}>{t}</Text>
+                <Text style={[styles.chipText, selected && { color: "#000" }]}>{t}</Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
-        {/* Difficulty */}
-        <Text style={[styles.label, { marginTop: 10 }]}>Difficulty</Text>
-        <View style={styles.diffRow}>
-          <TouchableOpacity
-            style={[
-              styles.diffBox,
-              difficulty === 'easy' && styles.diffBoxActive,
-            ]}
-            onPress={() => setDifficulty('easy')}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.diffTitle}>Easy</Text>
-            {/* Show number ONLY when selected */}
-            {difficulty === 'easy' && adjustedMin != null ? (
-              <Text style={styles.diffTime}>{adjustedMin} min</Text>
-            ) : null}
-            <Text style={styles.diffHint}>Base + 2 minutes</Text>
-          </TouchableOpacity>
+        {/* Story Script (center) */}
+        <Text style={styles.label}>Story Script</Text>
+        <TextInput
+          style={[styles.textAreaBig, styles.elevated]}
+          placeholder="Write your story idea here..."
+          placeholderTextColor="#6A6A6A"
+          value={script}
+          onChangeText={setScript}
+          editable={!accepted}
+          multiline
+        />
 
-          <TouchableOpacity
-            style={[
-              styles.diffBox,
-              difficulty === 'hard' && styles.diffBoxActive,
-            ]}
-            onPress={() => setDifficulty('hard')}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.diffTitle}>Hard</Text>
-            {/* Show number ONLY when selected */}
-            {difficulty === 'hard' && adjustedMin != null ? (
-              <Text style={styles.diffTime}>{adjustedMin} min</Text>
-            ) : null}
-            <Text style={styles.diffHint}>~Half the base time</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Generate Story (Option B) */}
+        <TouchableOpacity
+          style={[styles.generateBtn, styles.elevated, accepted && { opacity: 0.5 }]}
+          onPress={handleGenerate}
+          disabled={loading || accepted}
+          activeOpacity={0.9}
+        >
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.generateText}>✨ Generate Story</Text>}
+        </TouchableOpacity>
 
-        {/* Points + reward */}
+        {/* Duration + Points BELOW story */}
+        <Text style={[styles.label, { marginTop: 12 }]}>Duration</Text>
+        <TextInput
+          style={[styles.input, styles.elevated]}
+          placeholder="Example: 30 mins"
+          placeholderTextColor="#6A6A6A"
+          value={duration}
+          onChangeText={setDuration}
+        />
+
+        <Text style={[styles.label, { marginTop: 8 }]}>Points Reward</Text>
+        <TextInput
+          style={[styles.input, styles.elevated]}
+          placeholder="Example: 1000 pts"
+          placeholderTextColor="#6A6A6A"
+          value={points}
+          onChangeText={setPoints}
+          keyboardType="numeric"
+        />
+
+        {/* Optional */}
         <View style={styles.row}>
           <View style={styles.col}>
-            <Text style={styles.label}>Points Reward</Text>
+            <Text style={styles.label}>Suggested Rewards</Text>
             <TextInput
               style={[styles.input, styles.elevated]}
-              placeholder="1000"
+              placeholder="Suggest a pet"
               placeholderTextColor="#6A6A6A"
-              keyboardType="numeric"
-              value={points}
-              onChangeText={setPoints}
+              value={reward}
+              onChangeText={setReward}
             />
-          </View>
-          <View style={styles.col}>
-            <Text style={styles.label}>Suggested Reward (pet)</Text>
-            <View style={styles.petRow}>
-              <TextInput
-                style={[styles.input, styles.elevated, { flex: 1 }]}
-                placeholder="e.g., Golden Dragon"
-                placeholderTextColor="#6A6A6A"
-                value={rewardName}
-                onChangeText={setRewardName}
-              />
-              <TouchableOpacity style={styles.pickBtn} onPress={pickPetPhoto}>
-                <Text style={styles.pickBtnText}>Pick photo</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         </View>
 
-        {petImageUri && <Image source={{ uri: petImageUri }} style={styles.petPreview} />}
-
+        {/* Submit */}
         <TouchableOpacity
           style={[styles.submitBtn, styles.elevated]}
           activeOpacity={0.9}
-          onPress={onSubmit}
-          disabled={saving}
+          onPress={handleSubmit}
         >
-          <Text style={styles.submitText}>{saving ? 'Saving…' : 'Submit'}</Text>
+          <Text style={styles.submitText}>Submit</Text>
         </TouchableOpacity>
-
-        {Platform.OS === 'web' && (
-          <View style={styles.webBox}>
-            <Text style={{ fontWeight: '700' }}>Note:</Text>
-            <Text>Image picking & precise geolocation are limited on web. Test on a device with Expo Go.</Text>
-          </View>
-        )}
       </ScrollView>
+
+      {/* Blurred modal with story */}
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <BlurView intensity={30} tint="dark" style={styles.blurFill}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalHeader}>Here’s the generated story</Text>
+            <Text style={styles.modalTitle}>{genTitle}</Text>
+
+            <ScrollView style={styles.modalScroll}>
+              <Text style={styles.modalBody}>{genStory}</Text>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#111" }]} onPress={handleAccept}>
+                <Text style={styles.actionText}>Accept ✅</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#4a4a4a" }]} onPress={handleRegenerate}>
+                <Text style={styles.actionText}>Regenerate 🔄</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </BlurView>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, width: '100%', alignSelf: 'stretch', backgroundColor: '#000' },
+  root: { flex: 1, width: "100%", alignSelf: "stretch", backgroundColor: "#000" },
   bg: { ...StyleSheet.absoluteFillObject },
   scroll: { flexGrow: 1, padding: 16, paddingBottom: 96, rowGap: 8 },
 
-  formTitle: { fontSize: 22, fontWeight: '900', color: '#1a1a1a', marginTop: 10, marginBottom: 10 },
+  formTitle: { fontSize: 22, fontWeight: "900", color: "#1a1a1a", marginTop: 10, marginBottom: 10 },
 
-  label: { fontSize: 13, fontWeight: '800', marginLeft: 10, marginBottom: 6, color: '#2c3029' },
-  helperText: { marginHorizontal: 10, marginTop: -2, marginBottom: 8, color: '#2c3029', opacity: 0.8 },
+  label: { fontSize: 13, fontWeight: "800", marginLeft: 10, marginBottom: 6, color: "#2c3029" },
+  input: {
+    backgroundColor: "rgba(203,238,170,0.85)",
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
 
-  input: { backgroundColor: 'rgba(203,238,170,0.85)', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 12 },
+  textAreaBig: {
+    backgroundColor: "rgba(203,238,170,0.9)",
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    height: 220,
+    textAlignVertical: "top",
+    marginBottom: 10,
+  },
 
-  row: { flexDirection: 'row', gap: 12, marginTop: 6 },
+  row: { flexDirection: "row", gap: 12, marginTop: 6 },
   col: { flex: 1 },
 
-  // Difficulty boxes
-  diffRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
-  diffBox: { flex: 1, borderRadius: 14, padding: 14, borderWidth: 2, borderColor: '#00000022', backgroundColor: 'rgba(203,238,170,0.65)' },
-  diffBoxActive: { borderColor: '#0B3B54', backgroundColor: 'rgba(203,238,170,0.9)' },
-  diffTitle: { fontSize: 15, fontWeight: '800', color: '#0B3B54' },
-  diffTime: { fontSize: 22, fontWeight: '900', marginTop: 6, color: '#0B3B54' },
-  diffHint: { fontSize: 12, marginTop: 2, color: '#0B3B54' },
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 6 },
+  chip: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.12)" },
+  chipSelected: { borderColor: "#000" },
+  chipText: { fontWeight: "800", color: "#1f2722" },
 
-  mapWrap: { borderRadius: 16, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.08)' },
-  map: { width: '100%', height: 260 },
-
-  mapActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: 12,
-    backgroundColor: 'rgba(203,238,170,0.85)',
-  },
-  actionBtn: {
-    backgroundColor: '#9EE7FF',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  generateBtn: {
+    marginTop: 8,
+    backgroundColor: "#0E1E0F",
     borderRadius: 999,
-  },
-  actionBtnDark: {
-    backgroundColor: '#111',
-    paddingHorizontal: 16,
+    alignItems: "center",
     paddingVertical: 12,
+  },
+  generateText: { color: "#fff", fontWeight: "900", fontSize: 14 },
+
+  submitBtn: {
+    marginTop: 14,
+    backgroundColor: "#111",
     borderRadius: 999,
+    alignItems: "center",
+    paddingVertical: 14,
   },
-  actionBtnText: { fontWeight: '900', color: '#0B3B54' },
-  actionBtnTextLight: { fontWeight: '900', color: '#fff' },
-
-  metricsText: { padding: 8, fontWeight: '700', color: '#1a1a1a' },
-
-  // YOU marker (pulsing ring + badge)
-  youWrap: { alignItems: 'center' },
-  youPulse: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(0, 173, 255, 0.2)',
-  },
-  youBadge: {
-    position: 'absolute',
-    top: -16,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: '#8FE4FF',
-    borderWidth: 4,
-    borderColor: '#46BEE5',
-  },
-  youText: { color: '#0B3B54', fontWeight: '900', fontSize: 20 },
-
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 6, marginTop: 4 },
-  chip: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' },
-  chipSelected: { borderColor: '#000' },
-  chipText: { fontWeight: '800', color: '#1f2722' },
-
-  petRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  pickBtn: { backgroundColor: '#111', paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14 },
-  pickBtnText: { color: '#fff', fontWeight: '800' },
-  petPreview: { width: '100%', height: 140, borderRadius: 14, marginTop: 8 },
-
-  submitBtn: { marginTop: 14, backgroundColor: '#111', borderRadius: 999, alignItems: 'center', paddingVertical: 14 },
-  submitText: { color: '#fff', fontWeight: '900', fontSize: 16 },
+  submitText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
   elevated: Platform.select({
-    ios: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+    ios: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
     android: { elevation: 3 },
     default: {},
   }) as object,
 
-  webBox: { marginTop: 12, borderRadius: 12, padding: 12, backgroundColor: 'rgba(255,255,255,0.8)', gap: 4 },
+  // blur modal
+  blurFill: { flex: 1, alignItems: "center", justifyContent: "center" },
+  modalCard: {
+    width: "92%",
+    maxHeight: "85%",
+    backgroundColor: "rgba(255,255,255,0.98)",
+    borderRadius: 18,
+    padding: 16,
+  },
+  modalHeader: { fontSize: 14, fontWeight: "800", color: "#2c3029", marginBottom: 6, textAlign: "center" },
+  modalTitle: { fontSize: 18, fontWeight: "900", color: "#111", marginBottom: 8, textAlign: "center" },
+  modalScroll: { maxHeight: 320, marginBottom: 12 },
+  modalBody: { fontSize: 14, color: "#111" },
+  modalActions: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
+  actionBtn: { flex: 1, borderRadius: 16, alignItems: "center", paddingVertical: 10 },
+  actionText: { color: "#fff", fontWeight: "bold" },
 });
