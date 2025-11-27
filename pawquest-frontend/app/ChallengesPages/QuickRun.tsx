@@ -2,19 +2,16 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
+  useRef,
 } from "react";
 import {
   Alert,
-  Modal,
-  Pressable,
   SafeAreaView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
-  FlatList,
+  Pressable,
 } from "react-native";
 import MapView, { LatLng, Polyline } from "react-native-maps";
 import * as Location from "expo-location";
@@ -22,8 +19,6 @@ import { Audio } from "expo-av";
 import { useRouter, useLocalSearchParams } from "expo-router";
 
 import AudioBar, { AudioBarHandle } from "../../components/AudioBar";
-import { db } from "../../src/lib/firebase";
-import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 
 import { auth } from "@/src/lib/firebase";
 import {
@@ -39,7 +34,9 @@ import {
   saveStoryCompletion,
 } from "@/src/lib/stories";
 
-// Utility functions
+/* -------------------------------------------------------
+    UTILS
+------------------------------------------------------- */
 const haversineM = (a: LatLng, b: LatLng) => {
   const R = 6371e3;
   const lat1 = (a.latitude * Math.PI) / 180;
@@ -52,21 +49,23 @@ const haversineM = (a: LatLng, b: LatLng) => {
   return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 };
 
-const fmtKm = (m: number) =>
-  m >= 0 ? (m / 1000).toFixed(2) : "0.00";
+const fmtKm = (m: number) => (m >= 0 ? (m / 1000).toFixed(2) : "0.00");
 
 const fmtTime = (sec: number) => {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
-  const pad = (n: number) => `${n}`.padStart(2, "0");
-  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  const p = (n: number) => `${n}`.padStart(2, "0");
+  return h > 0 ? `${p(h)}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 };
 
-const QUICK_SEGMENT_DISTANCE_M = 200;
-const QUICK_SEGMENT_THRESHOLDS = Array.from(
+/* -------------------------------------------------------
+    DISTANCE TRIGGERED STORY
+------------------------------------------------------- */
+const SEGMENT_DIST = 200;
+const THRESHOLDS = Array.from(
   { length: STORY_SEGMENT_COUNT },
-  (_, idx) => idx * QUICK_SEGMENT_DISTANCE_M,
+  (_, i) => i * SEGMENT_DIST
 );
 
 export default function QuickRun() {
@@ -77,161 +76,145 @@ export default function QuickRun() {
     audioTitle?: string;
   }>();
 
-  const storyParamRaw =
+  /* -------------------------------------------------------
+        STORY PAYLOAD (OPTIONAL)
+  ------------------------------------------------------- */
+  const rawStory =
     typeof params.story === "string" && params.story.length > 0
       ? params.story
-      : undefined;
+      : null;
 
   const activeStory = useMemo<StorySegments | null>(() => {
-    if (!storyParamRaw) return null;
+    if (!rawStory) return null;
     try {
-      const decoded = decodeURIComponent(storyParamRaw);
-      const payload = JSON.parse(decoded);
-      if (
-        !payload ||
-        !Array.isArray(payload.segmentUrls) ||
-        payload.segmentUrls.length === 0
-      ) {
+      const decoded = decodeURIComponent(rawStory);
+      const obj = JSON.parse(decoded);
+      if (!Array.isArray(obj.segmentUrls) || obj.segmentUrls.length === 0)
         return null;
-      }
+
       return {
-        ...payload,
-        segmentUrls: payload.segmentUrls.slice(0, STORY_SEGMENT_COUNT),
-      } as StorySegments;
-    } catch (error) {
-      console.warn("[QuickRun] invalid story payload", error);
+        ...obj,
+        segmentUrls: obj.segmentUrls.slice(0, STORY_SEGMENT_COUNT),
+      };
+    } catch (e) {
+      console.warn("Invalid story payload");
       return null;
     }
-  }, [storyParamRaw]);
+  }, [rawStory]);
 
-  const initialAudioUri =
+  /* -------------------------------------------------------
+        AUDIO (FROM QuickChallengeDetails)
+  ------------------------------------------------------- */
+  const initialUri =
     typeof params.audioUri === "string" ? params.audioUri : "";
-  const initialAudioTitle =
+  const initialTitle =
     typeof params.audioTitle === "string" ? params.audioTitle : "";
 
-  const [audio, setAudio] = useState<
-    { uri: string; title: string } | null
-  >(
-    initialAudioUri
-      ? { uri: initialAudioUri, title: initialAudioTitle }
-      : null,
+  const [audio, setAudio] = useState(
+    initialUri ? { uri: initialUri, title: initialTitle || "Audio" } : null
   );
 
   const audioRef = useRef<AudioBarHandle>(null);
 
-  // ░░░ RUNNING STATE ░░░
+  /* -------------------------------------------------------
+        RUNNING STATE
+  ------------------------------------------------------- */
   const [region, setRegion] = useState<any | null>(null);
   const [path, setPath] = useState<LatLng[]>([]);
   const [distanceM, setDistanceM] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [running, setRunning] = useState(true);
-  const watchRef = useRef<Location.LocationSubscription | null>(null);
   const mapRef = useRef<MapView | null>(null);
+  const watchRef = useRef<Location.LocationSubscription | null>(null);
   const [tick, setTick] = useState(0);
 
+  /* -------------------------------------------------------
+        STORY SEGMENT AUDIO (Herb of Dawn style)
+  ------------------------------------------------------- */
   const [storyStatus, setStoryStatus] = useState(
-    activeStory ? "Loading story…" : "No story selected",
+    activeStory ? "Loading story…" : "No story selected"
   );
   const storySoundsRef = useRef<Audio.Sound[]>([]);
-  const currentStorySegmentRef = useRef<number | null>(null);
-  const triggeredSegmentsRef = useRef<boolean[]>(
-    Array(STORY_SEGMENT_COUNT).fill(false),
+  const currentSegRef = useRef<number | null>(null);
+  const triggeredRef = useRef<boolean[]>(Array(STORY_SEGMENT_COUNT).fill(false));
+
+  const elapsed = useMemo(
+    () => (startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0),
+    [startedAt, tick]
   );
 
-  const elapsedSec = useMemo(
-    () =>
-      startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0,
-    [startedAt, tick],
+  const xp = useMemo(
+    () => Math.max(0, Math.floor((getCurrentSessionSteps() ?? 0) / 5)),
+    [tick]
   );
 
-  // Display XP from current background session: 1 XP per 5 steps
-  const displayedXp = useMemo(
-    () =>
-      Math.max(0, Math.floor((getCurrentSessionSteps() ?? 0) / 5)),
-    [tick],
-  );
-
-  // ░░░ STORY AUDIO HELPERS ░░░
-  const stopCurrentStory = useCallback(async () => {
-    if (currentStorySegmentRef.current === null) return;
+  /* -------------------------------------------------------
+       STORY AUDIO HELPERS
+  ------------------------------------------------------- */
+  const stopSeg = useCallback(async () => {
+    if (currentSegRef.current === null) return;
     try {
-      await storySoundsRef.current[
-        currentStorySegmentRef.current
-      ]?.stopAsync();
-    } catch {
-      // ignore
-    }
-    currentStorySegmentRef.current = null;
+      await storySoundsRef.current[currentSegRef.current]?.stopAsync();
+    } catch {}
+    currentSegRef.current = null;
   }, []);
 
-  const unloadStoryAudio = useCallback(async () => {
+  const unloadSegs = useCallback(async () => {
     await Promise.all(
-      storySoundsRef.current.map((sound) =>
-        sound
-          .unloadAsync()
-          .catch(() => {
-            /* ignore */
-          }),
-      ),
+      storySoundsRef.current.map((s) =>
+        s.unloadAsync().catch(() => {})
+      )
     );
     storySoundsRef.current = [];
   }, []);
 
-  const playSegmentAtIndex = useCallback(
-    async (idx: number) => {
-      const sound = storySoundsRef.current[idx];
-      if (!sound) return;
-      try {
-        if (
-          currentStorySegmentRef.current !== null &&
-          currentStorySegmentRef.current !== idx
-        ) {
-          await storySoundsRef.current[
-            currentStorySegmentRef.current
-          ]?.stopAsync();
-        }
-        await sound.setPositionAsync(0);
-        await sound.playAsync();
-        currentStorySegmentRef.current = idx;
-        triggeredSegmentsRef.current[idx] = true;
-        setStoryStatus(`Segment ${idx + 1} playing`);
-      } catch (error) {
-        console.warn("[QuickRun] failed to play story segment", error);
-      }
-    },
-    [],
-  );
+  const playSeg = useCallback(async (idx: number) => {
+    const snd = storySoundsRef.current[idx];
+    if (!snd) return;
 
-  // ░░░ START LOCATION TRACKING ░░░
+    try {
+      if (
+        currentSegRef.current !== null &&
+        currentSegRef.current !== idx
+      ) {
+        await storySoundsRef.current[currentSegRef.current]?.stopAsync();
+      }
+      await snd.setPositionAsync(0);
+      await snd.playAsync();
+      currentSegRef.current = idx;
+      triggeredRef.current[idx] = true;
+      setStoryStatus(`Segment ${idx + 1} playing`);
+    } catch (e) {
+      console.warn("Failed to play segment", e);
+    }
+  }, []);
+
+  /* -------------------------------------------------------
+       START TRACKING
+  ------------------------------------------------------- */
   const startTracking = useCallback(async () => {
-    const { status } =
-      await Location.requestForegroundPermissionsAsync();
+    const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
-        "Permission needed",
-        "Enable location to start the run.",
-      );
+      Alert.alert("Permission needed", "Enable location.");
       return;
     }
 
     const curr = await Location.getCurrentPositionAsync({});
-    const initial: LatLng = {
+    const first: LatLng = {
       latitude: curr.coords.latitude,
       longitude: curr.coords.longitude,
     };
 
     setRegion({
-      latitude: initial.latitude,
-      longitude: initial.longitude,
+      latitude: first.latitude,
+      longitude: first.longitude,
       latitudeDelta: 0.01,
       longitudeDelta: 0.01,
     });
 
-    setPath([initial]);
+    setPath([first]);
     setStartedAt(Date.now());
     setRunning(true);
-
-    // start steps/calories background session
     void beginChallengeSession();
 
     watchRef.current = await Location.watchPositionAsync(
@@ -257,13 +240,15 @@ export default function QuickRun() {
 
         mapRef.current?.animateCamera(
           { center: pt, zoom: 16 },
-          { duration: 600 },
+          { duration: 600 }
         );
-      },
+      }
     );
   }, []);
 
-  // ░░░ FINISH RUN ░░░
+  /* -------------------------------------------------------
+        FINISH RUN
+  ------------------------------------------------------- */
   const finishRun = useCallback(async () => {
     setRunning(false);
     try {
@@ -271,205 +256,106 @@ export default function QuickRun() {
     } catch {}
     watchRef.current = null;
 
-    await stopCurrentStory();
-    await unloadStoryAudio();
+    await stopSeg();
+    await unloadSegs();
 
-    // End background session and persist steps/calories; use steps for XP
-    let sessionTotals = { steps: 0, calories: 0 };
+    // end step session
+    let totals = { steps: 0, calories: 0 };
     try {
-      sessionTotals = await endChallengeSessionAndPersist();
+      totals = await endChallengeSessionAndPersist();
     } catch {}
 
-    const xp = Math.max(
-      0,
-      Math.floor((sessionTotals.steps ?? 0) / 5),
-    );
-
+    const gainedXP = Math.max(0, Math.floor((totals.steps ?? 0) / 5));
     const uid = auth.currentUser?.uid;
-    if (uid && xp > 0) {
-      await awardPlayerProgress({ uid, xpEarned: xp });
+
+    if (uid && gainedXP > 0) {
+      await awardPlayerProgress({ uid, xpEarned: gainedXP });
     }
     if (uid && activeStory) {
       try {
         await saveStoryCompletion(uid, activeStory);
-      } catch (error) {
-        console.warn(
-          "[QuickRun] failed to save story completion",
-          error,
-        );
-      }
+      } catch {}
     }
 
-    Alert.alert("Great Job!", `You gained ${xp} XP`, [
+    Alert.alert("Great Job!", `You gained ${gainedXP} XP`, [
       { text: "Home", onPress: () => router.replace("/(tabs)") },
     ]);
-  }, [activeStory, router, stopCurrentStory, unloadStoryAudio]);
+  }, [router, activeStory, stopSeg, unloadSegs]);
 
-  // ░░░ CHANGE AUDIO MODAL ░░░
-  const [audioModal, setAudioModal] = useState(false);
-  const [storySeriesList, setStorySeriesList] = useState<any[]>([]);
-  const [storiesList, setStoriesList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  // ░░░ LOAD AUDIO OPTIONS ░░░
-  const loadAudioSources = useCallback(async () => {
-    try {
-      setLoading(true);
-
-      // Load Story Series audios
-      const docRef = doc(db, "Story Series", "The herb of dawn");
-      const snap = await getDoc(docRef);
-
-      const seriesAudio: any[] = [];
-
-      if (snap.exists()) {
-        const data = snap.data() as Record<string, string[]>;
-        Object.keys(data).forEach((episode) => {
-          const arr = data[episode];
-          if (Array.isArray(arr)) {
-            arr.forEach((mp3: string, index: number) => {
-              if (typeof mp3 === "string" && mp3.length > 0) {
-                seriesAudio.push({
-                  id: `${episode}-${index}`,
-                  title: `${episode} • Part ${index + 1}`,
-                  uri: mp3,
-                });
-              }
-            });
-          }
-        });
-      }
-
-      setStorySeriesList(seriesAudio);
-
-      // Load "stories" collection
-      const storiesSnap = await getDocs(collection(db, "stories"));
-      const stories: any[] = [];
-
-      storiesSnap.forEach((docSnap) => {
-        const d = docSnap.data() as any;
-        if (d.audioUrl) {
-          stories.push({
-            id: docSnap.id,
-            title: d.title || "Story",
-            uri: d.audioUrl,
-          });
-        }
-      });
-
-      setStoriesList(stories);
-    } catch (err) {
-      console.log("Audio load error:", err);
-    }
-
-    setLoading(false);
-  }, []);
-
-  const applyAudio = (track: any) => {
-    setAudio(track);
-    audioRef.current?.loadNewAudio(track.uri);
-  };
-
-  // ░░░ EFFECTS ░░░
-
-  // Story label text when activeStory changes
+  /* -------------------------------------------------------
+        EFFECTS
+  ------------------------------------------------------- */
+  // Setup story segments
   useEffect(() => {
-    setStoryStatus(
-      activeStory ? "Loading story…" : "No story selected",
-    );
+    setStoryStatus(activeStory ? "Loading story…" : "No story selected");
   }, [activeStory]);
 
-  // Load story audio segments when activeStory changes
   useEffect(() => {
     let cancelled = false;
 
-    const loadStory = async () => {
-      triggeredSegmentsRef.current = Array(
-        STORY_SEGMENT_COUNT,
-      ).fill(false);
-      await stopCurrentStory();
-      await unloadStoryAudio();
+    const load = async () => {
+      triggeredRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+      await stopSeg();
+      await unloadSegs();
 
-      if (
-        !activeStory ||
-        !Array.isArray(activeStory.segmentUrls) ||
-        activeStory.segmentUrls.length === 0
-      ) {
+      if (!activeStory) {
         setStoryStatus("No story selected");
         return;
       }
 
       try {
         const sounds: Audio.Sound[] = [];
-        for (const url of activeStory.segmentUrls.slice(
-          0,
-          STORY_SEGMENT_COUNT,
-        )) {
-          const sound = new Audio.Sound();
-          await sound.loadAsync({ uri: url });
-          sounds.push(sound);
+        for (const url of activeStory.segmentUrls) {
+          const s = new Audio.Sound();
+          await s.loadAsync({ uri: url });
+          sounds.push(s);
         }
 
         if (cancelled) {
-          await Promise.all(
-            sounds.map((s) =>
-              s
-                .unloadAsync()
-                .catch(() => {
-                  /* ignore */
-                }),
-          );
+          sounds.forEach((s) => s.unloadAsync().catch(() => {}));
           return;
         }
 
         storySoundsRef.current = sounds;
-        currentStorySegmentRef.current = null;
+        currentSegRef.current = null;
         setStoryStatus("Ready");
-      } catch (error) {
-        console.warn(
-          "[QuickRun] failed to load story audio",
-          error,
-        );
+      } catch (e) {
         setStoryStatus("Audio unavailable");
       }
     };
 
-    void loadStory();
-
+    load();
     return () => {
       cancelled = true;
     };
-  }, [activeStory, stopCurrentStory, unloadStoryAudio]);
+  }, [activeStory, stopSeg, unloadSegs]);
 
-  // Trigger story segments based on distance
+  // trigger segments
   useEffect(() => {
     if (!running || !activeStory) return;
     if (storySoundsRef.current.length === 0) return;
 
-    QUICK_SEGMENT_THRESHOLDS.forEach((threshold, idx) => {
-      if (
-        distanceM >= threshold &&
-        !triggeredSegmentsRef.current[idx]
-      ) {
-        void playSegmentAtIndex(idx);
+    THRESHOLDS.forEach((th, idx) => {
+      if (distanceM >= th && !triggeredRef.current[idx]) {
+        void playSeg(idx);
       }
     });
-  }, [distanceM, running, activeStory, playSegmentAtIndex]);
+  }, [distanceM, running, activeStory, playSeg]);
 
-  // Start tracking on mount + cleanup on unmount
+  // start tracking
   useEffect(() => {
-    void startTracking();
+    startTracking();
     return () => {
       try {
         watchRef.current?.remove();
       } catch {}
       watchRef.current = null;
-      void stopCurrentStory();
-      void unloadStoryAudio();
+      stopSeg();
+      unloadSegs();
     };
-  }, [startTracking, stopCurrentStory, unloadStoryAudio]);
+  }, [startTracking, stopSeg, unloadSegs]);
 
-  // Overspeed handler: abort without rewards
+  // overspeed
   useEffect(() => {
     const off = onChallengeViolation(() => {
       if (!running) return;
@@ -478,19 +364,11 @@ export default function QuickRun() {
       } catch {}
       watchRef.current = null;
       setRunning(false);
-      void stopCurrentStory();
-      void unloadStoryAudio();
-      Alert.alert(
-        "Warning",
-        "Using transportation is not allowed.",
-        [
-          {
-            text: "I understand",
-            onPress: () => router.replace("/(tabs)"),
-          },
-        ],
-        { cancelable: false },
-      );
+      stopSeg();
+      unloadSegs();
+      Alert.alert("Warning", "Using transportation is not allowed.", [
+        { text: "OK", onPress: () => router.replace("/(tabs)") },
+      ]);
     });
 
     return () => {
@@ -498,36 +376,23 @@ export default function QuickRun() {
         off();
       } catch {}
     };
-  }, [running, router, stopCurrentStory, unloadStoryAudio]);
+  }, [running, router, stopSeg, unloadSegs]);
 
-  // Tick every second for timer + XP display
+  // tick
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(
-      () => setTick((t) => t + 1),
-      1000,
-    );
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [running]);
 
-  // ░░░ UI ░░░
+  /* -------------------------------------------------------
+        UI
+  ------------------------------------------------------- */
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Quick Challenge Run</Text>
-
-        <Pressable
-          style={styles.changeAudioBtn}
-          onPress={() => {
-            loadAudioSources();
-            setAudioModal(true);
-          }}
-        >
-          <Text style={styles.changeAudioText}>
-            Change Audio 🎵
-          </Text>
-        </Pressable>
       </View>
 
       {/* MAP */}
@@ -548,16 +413,14 @@ export default function QuickRun() {
         </MapView>
       </View>
 
-      {/* AUDIO BAR ABOVE STATS */}
+      {/* AUDIO BAR (if any audio selected) */}
       {audio && (
-        <View
-          style={{ paddingHorizontal: 12, marginTop: 6 }}
-        >
+        <View style={{ paddingHorizontal: 12, marginTop: 6 }}>
           <AudioBar
             ref={audioRef}
             title={audio.title}
             source={{ uri: audio.uri }}
-            visible
+            visible={true}
           />
         </View>
       )}
@@ -566,21 +429,17 @@ export default function QuickRun() {
       <View style={styles.statsCard}>
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Distance</Text>
-          <Text style={styles.statValue}>
-            {fmtKm(distanceM)} km
-          </Text>
+          <Text style={styles.statValue}>{fmtKm(distanceM)} km</Text>
         </View>
 
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Time</Text>
-          <Text style={styles.statValue}>
-            {fmtTime(elapsedSec)}
-          </Text>
+          <Text style={styles.statValue}>{fmtTime(elapsed)}</Text>
         </View>
 
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>XP</Text>
-          <Text style={styles.statValue}>{displayedXp}</Text>
+          <Text style={styles.statValue}>{xp}</Text>
         </View>
       </View>
 
@@ -589,33 +448,23 @@ export default function QuickRun() {
         <Text style={styles.storyLabel}>Story Segments</Text>
         {activeStory ? (
           <>
-            <Text
-              style={styles.storyTitle}
-              numberOfLines={1}
-            >
+            <Text style={styles.storyTitle} numberOfLines={1}>
               {activeStory.title}
             </Text>
-            <Text style={styles.storyStatus}>
-              {storyStatus}
-            </Text>
-            <Text style={styles.storyHint}>
-              0m · 200m · 400m · 600m · 800m
-            </Text>
+            <Text style={styles.storyStatus}>{storyStatus}</Text>
+            <Text style={styles.storyHint}>0m · 200m · 400m · 600m · 800m</Text>
           </>
         ) : (
           <>
-            <Text style={styles.storyStatus}>
-              No story selected
-            </Text>
+            <Text style={styles.storyStatus}>No story selected</Text>
             <Text style={styles.storyHint}>
-              Pick a story before starting to hear
-              audio.
+              You can still enjoy the main audio.
             </Text>
           </>
         )}
       </View>
 
-      {/* FINISH */}
+      {/* FINISH BUTTON */}
       <Pressable
         onPress={finishRun}
         style={({ pressed }) => [
@@ -625,108 +474,13 @@ export default function QuickRun() {
       >
         <Text style={styles.finishText}>Finish</Text>
       </Pressable>
-
-      {/* AUDIO PICKER MODAL */}
-      <Modal
-        visible={audioModal}
-        transparent
-        animationType="slide"
-      >
-        <View style={styles.modalWrap}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>
-              Change Audio
-            </Text>
-
-            {loading && <Text>Loading...</Text>}
-
-            {!loading && (
-              <>
-                {/* STORY SERIES */}
-                <Text style={styles.sectionTitle}>
-                  Story Series
-                </Text>
-                <FlatList
-                  data={storySeriesList}
-                  keyExtractor={(i) => i.id}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={styles.audioOption}
-                      onPress={() => {
-                        applyAudio(item);
-                        setAudioModal(false);
-                      }}
-                    >
-                      <Text
-                        style={styles.audioOptionText}
-                      >
-                        {item.title}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                />
-
-                {/* STORIES */}
-                <Text style={styles.sectionTitle}>
-                  Stories
-                </Text>
-                <FlatList
-                  data={storiesList}
-                  keyExtractor={(i) => i.id}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={styles.audioOption}
-                      onPress={() => {
-                        applyAudio(item);
-                        setAudioModal(false);
-                      }}
-                    >
-                      <Text
-                        style={styles.audioOptionText}
-                      >
-                        {item.title}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                />
-
-                {/* NO AUDIO */}
-                <TouchableOpacity
-                  style={[
-                    styles.audioOption,
-                    { backgroundColor: "#fee" },
-                  ]}
-                  onPress={() => {
-                    setAudio(null);
-                    audioRef.current?.stopAudio();
-                    setAudioModal(false);
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.audioOptionText,
-                      { color: "red" },
-                    ]}
-                  >
-                    No Audio
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            <Pressable
-              onPress={() => setAudioModal(false)}
-              style={styles.closeBtn}
-            >
-              <Text style={styles.closeText}>Close</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
 
+/* -------------------------------------------------------
+    STYLES
+------------------------------------------------------- */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
 
@@ -738,6 +492,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
+
   headerTitle: {
     color: "#fff",
     fontSize: 18,
@@ -748,14 +503,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  changeAudioBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#34A853",
-    borderRadius: 10,
-  },
-  changeAudioText: { color: "#fff", fontWeight: "800" },
-
   statsCard: {
     flexDirection: "row",
     backgroundColor: "#BEE3BF",
@@ -764,6 +511,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
+
   statBox: { flex: 1, alignItems: "center" },
   statLabel: { fontWeight: "700", color: "#0B3D1F" },
   statValue: {
@@ -817,41 +565,4 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 18,
   },
-
-  modalWrap: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.4)",
-  },
-  modalBox: {
-    backgroundColor: "white",
-    padding: 16,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: "70%",
-  },
-  modalTitle: { fontSize: 20, fontWeight: "900", marginBottom: 10 },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    marginTop: 12,
-    marginBottom: 6,
-  },
-
-  audioOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ddd",
-  },
-  audioOptionText: { fontSize: 15, fontWeight: "700" },
-
-  closeBtn: {
-    marginTop: 16,
-    backgroundColor: "#ddd",
-    padding: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  closeText: { fontSize: 16, fontWeight: "800" },
 });

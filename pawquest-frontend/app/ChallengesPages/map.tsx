@@ -1,10 +1,4 @@
-// app/map.tsx — DB-driven start/end, smart ORS, split route, HUD + Audio
-import AudioBar, { AudioBarHandle } from "../../components/AudioBar";
-import ChallengeHUD from "../../components/ChallengeHUD";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Location from "expo-location";
-import { Audio } from "expo-av";
-import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+// app/ChallengesPages/map.tsx — DB-driven start/end, smart ORS, split route, HUD + Story Audio
 import React, {
   useCallback,
   useEffect,
@@ -25,8 +19,15 @@ import {
   TouchableOpacity,
 } from "react-native";
 import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
+import { Audio } from "expo-av";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 
-// Firestore
+import AudioBar, { AudioBarHandle } from "../../components/AudioBar";
+import ChallengeHUD from "../../components/ChallengeHUD";
+
+// Firestore + backend
 import { auth, db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import {
@@ -51,6 +52,7 @@ import {
 const ORS_API_KEY =
   "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjNhYmYxMzBmODQwNzQ2ODM4Mzk3M2RmNjcyNzExMzAyIiwiaCI6Im11cm11cjY0In0=";
 
+// thresholds
 const PROXIMITY_M = 50;
 const MOVE_RECALC_M = 8;
 const RECALC_MIN_GAP_MS = 5000;
@@ -85,12 +87,13 @@ type VariantDoc = {
 
 type ChallengeDoc = {
   title?: string;
+  // coordinates may live at root or inside variants.easy / variants.hard
   start?: GeoPointLike;
   end?: GeoPointLike;
-  audioUrl?: string;
   variants?: {
     easy?: VariantDoc;
     hard?: VariantDoc;
+    [key: string]: VariantDoc | undefined;
   };
   [key: string]: any;
 };
@@ -98,33 +101,52 @@ type ChallengeDoc = {
 const toLatLng = (value: unknown): LatLng | null => {
   if (!value || typeof value !== "object") return null;
   const geo = value as GeoPointLike;
-
-  const lat = geo.latitude ?? geo._lat ?? geo.lat;
-  const lng = geo.longitude ?? geo._long ?? geo.lng;
-
-  if (typeof lat === "number" && typeof lng === "number") {
+  const lat =
+    typeof geo.latitude === "number"
+      ? geo.latitude
+      : typeof geo._lat === "number"
+      ? geo._lat
+      : typeof geo.lat === "number"
+      ? geo.lat
+      : undefined;
+  const lng =
+    typeof geo.longitude === "number"
+      ? geo.longitude
+      : typeof geo._long === "number"
+      ? geo._long
+      : typeof geo.lng === "number"
+      ? geo.lng
+      : undefined;
+  if (
+    typeof lat === "number" &&
+    Number.isFinite(lat) &&
+    typeof lng === "number" &&
+    Number.isFinite(lng)
+  ) {
     return { latitude: lat, longitude: lng };
   }
   return null;
 };
 
-const readVariant = (doc: ChallengeDoc, key: string | undefined) => {
+const readVariant = (docData: ChallengeDoc, key: string | undefined) => {
   if (!key) return null;
-  return doc.variants?.[key] || (doc[key] as VariantDoc) || null;
+  const fromVariants = docData.variants?.[key];
+  if (fromVariants && typeof fromVariants === "object") return fromVariants;
+  const topLevel = (docData as any)[key];
+  if (topLevel && typeof topLevel === "object") return topLevel as VariantDoc;
+  return null;
 };
 
-// Helpers
+// helpers
 const haversineM = (a: LatLng, b: LatLng) => {
   const R = 6371e3;
   const φ1 = (a.latitude * Math.PI) / 180;
   const φ2 = (b.latitude * Math.PI) / 180;
   const dφ = ((b.latitude - a.latitude) * Math.PI) / 180;
   const dλ = ((b.longitude - a.longitude) * Math.PI) / 180;
-
   const s =
     Math.sin(dφ / 2) ** 2 +
     Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
-
   return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 };
 
@@ -140,7 +162,8 @@ const formatDuration = (s: number) => {
 };
 
 function nearestRouteIndex(route: LatLng[], you: LatLng) {
-  let best = Infinity;
+  if (route.length === 0) return 0;
+  let best = Number.POSITIVE_INFINITY;
   let idx = 0;
   for (let i = 0; i < route.length; i++) {
     const dx = route[i].latitude - you.latitude;
@@ -158,75 +181,100 @@ export default function MapScreen() {
   const router = useRouter();
   const navigation = useNavigation<any>();
 
-  const params = useLocalSearchParams<any>();
+  const {
+    challengeId: challengeIdParam,
+    difficulty,
+    storyType: storyTypeParam,
+    storySeasonId,
+    storyEpisodeId,
+    storyPetKey,
+  } = useLocalSearchParams<{
+    challengeId?: string | string[];
+    difficulty?: string | string[];
+    storyType?: string | string[];
+    storySeasonId?: string | string[];
+    storyEpisodeId?: string | string[];
+    storyPetKey?: string | string[];
+  }>();
 
-  const challengeId = Array.isArray(params.challengeId)
-    ? params.challengeId[0]
-    : params.challengeId ?? null;
+  const challengeId = Array.isArray(challengeIdParam)
+    ? challengeIdParam[0] ?? null
+    : challengeIdParam ?? null;
 
-  const difficultyRaw = Array.isArray(params.difficulty)
-    ? params.difficulty[0]
-    : params.difficulty;
+  const difficultyValue = Array.isArray(difficulty)
+    ? difficulty[0]
+    : difficulty;
 
   const variantParam =
-    typeof difficultyRaw === "string" &&
-    difficultyRaw.toLowerCase() === "hard"
+    typeof difficultyValue === "string" &&
+    difficultyValue.toLowerCase() === "hard"
       ? "hard"
       : "easy";
 
-  const normalize = (v: any) => (Array.isArray(v) ? v[0] : v) ?? null;
+  const normalizeParam = (value: string | string[] | null | undefined) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (typeof raw === "string" && raw.trim().length > 0) return raw;
+    return null;
+  };
 
-  const storyType = normalize(params.storyType);
-  const storySeasonId = normalize(params.storySeasonId);
-  const storyEpisodeId = normalize(params.storyEpisodeId);
-  const storyPetKey = normalize(params.storyPetKey);
+  const storyTypeValue = normalizeParam(storyTypeParam);
+  const storySeasonValue = normalizeParam(storySeasonId);
+  const storyEpisodeValue = normalizeParam(storyEpisodeId);
+  const storyPetValue = normalizeParam(storyPetKey);
 
   const storyTypeSelection =
-    storyType === "season" || storyType === "pet" ? storyType : null;
+    storyTypeValue === "season" || storyTypeValue === "pet"
+      ? storyTypeValue
+      : null;
 
   const userId = auth.currentUser?.uid ?? null;
 
   // DB + challenge state
-  const [challengeTitle, setChallengeTitle] = useState<string | undefined>();
+  const [challengeTitle, setChallengeTitle] = useState<string | undefined>(
+    undefined
+  );
   const [challengeDoc, setChallengeDoc] = useState<ChallengeDoc | null>(null);
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [endPoint, setEndPoint] = useState<LatLng | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | undefined>();
   const [variantCompletions, setVariantCompletions] =
-    useState<VariantCompletionFlags>({ easy: false, hard: false });
+    useState<VariantCompletionFlags>({
+      easy: false,
+      hard: false,
+    });
   const [locksReady, setLocksReady] = useState(false);
 
-  // Map & location
+  // Map/Location
   const [region, setRegion] = useState<any>(null);
   const [userLocation, setUserLocation] = useState<LatLng | null>(null);
   const [hasPermission, setHasPermission] = useState(false);
 
-  // Challenge gating
+  // Gating
   const [nearStart, setNearStart] = useState(false);
   const [nearEnd, setNearEnd] = useState(false);
   const [challengeStarted, setChallengeStarted] = useState(false);
 
-  // ORS routing
+  // Routing
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [summary, setSummary] = useState<RouteSummary | null>(null);
   const [initialRouteDistanceM, setInitialRouteDistanceM] =
     useState<number | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
-  // Refs
-  const abortRef = useRef<AbortController | null>(null);
-  const lastFetchAtRef = useRef(0);
-  const lastRouteOriginRef = useRef<LatLng | null>(null);
+  // smart fetch
   const lockAlertShownRef = useRef(false);
+  const lastFetchAtRef = useRef<number>(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const lastRouteOriginRef = useRef<LatLng | null>(null);
   const runStatsRef = useRef<RunStats>({
     startAt: null,
     distance: 0,
     lastPoint: null,
   });
 
-  const navigatingRef = useRef(false);
+  // navigation guard used in onCapture
+  const navigatingRef = useRef<boolean>(false);
 
-  // Pre-start routing
+  // Pre-start (show route from YOU to Start before start)
   const [showStartPrompt, setShowStartPrompt] = useState(false);
   const [preStartRouteCoords, setPreStartRouteCoords] = useState<LatLng[]>([]);
   const preStartAbortRef = useRef<AbortController | null>(null);
@@ -237,18 +285,19 @@ export default function MapScreen() {
   const pulse = useRef(new Animated.Value(0)).current;
   const [variantImageUrl, setVariantImageUrl] = useState<string | null>(null);
 
-  // Story mode
+  // Story mode (segments)
   const [activeStory, setActiveStory] = useState<StorySegments | null>(null);
   const [storyStatus, setStoryStatus] = useState("Ready");
   const [storyPlaying, setStoryPlaying] = useState(false);
   const storySoundsRef = useRef<Audio.Sound[]>([]);
-  const triggeredSegmentsRef = useRef(
+  const triggeredSegmentsRef = useRef<boolean[]>(
     Array(STORY_SEGMENT_COUNT).fill(false)
   );
   const currentStorySegmentRef = useRef<number | null>(null);
 
-  const audioRef = useRef<AudioBarHandle>(null);
-}
+  // Audio bar (controller for story mode only)
+  const audioBarRef = useRef<AudioBarHandle>(null);
+
   // Pulse animation for YOU marker
   useEffect(() => {
     Animated.loop(
@@ -265,7 +314,6 @@ export default function MapScreen() {
     inputRange: [0, 1],
     outputRange: [0.6, 1.6],
   });
-
   const opacity = pulse.interpolate({
     inputRange: [0, 1],
     outputRange: [0.7, 0],
@@ -275,14 +323,11 @@ export default function MapScreen() {
   const pauseStoryPlayback = useCallback(async () => {
     const idx = currentStorySegmentRef.current;
     if (idx === null) return;
-
     const sound = storySoundsRef.current[idx];
     if (!sound) return;
-
     try {
       await sound.pauseAsync();
     } catch {}
-
     setStoryPlaying(false);
     setStoryStatus("Paused");
   }, []);
@@ -290,16 +335,14 @@ export default function MapScreen() {
   const resumeStoryPlayback = useCallback(async () => {
     const idx = currentStorySegmentRef.current;
     if (idx === null) return;
-
     const sound = storySoundsRef.current[idx];
     if (!sound) return;
-
     try {
       await sound.playAsync();
       setStoryPlaying(true);
       setStoryStatus(`Segment ${idx + 1} playing`);
-    } catch (err) {
-      console.warn("[MapScreen] resume failed", err);
+    } catch (error) {
+      console.warn("[MapScreen] failed to resume story segment", error);
     }
   }, []);
 
@@ -318,43 +361,38 @@ export default function MapScreen() {
   const playSegmentAtIndex = useCallback(
     async (targetIndex: number) => {
       if (!activeStory || !storySoundsRef.current[targetIndex]) return;
-
       const currentIdx = currentStorySegmentRef.current;
-
-      // Stop previous segment
       if (currentIdx !== null && currentIdx !== targetIndex) {
         try {
           await storySoundsRef.current[currentIdx]?.stopAsync();
         } catch {}
       }
-
       currentStorySegmentRef.current = targetIndex;
       triggeredSegmentsRef.current[targetIndex] = true;
-
       try {
         await storySoundsRef.current[targetIndex]?.setPositionAsync(0);
         await storySoundsRef.current[targetIndex]?.playAsync();
-
         setStoryPlaying(true);
         setStoryStatus(`Segment ${targetIndex + 1} playing`);
-      } catch (err) {
-        console.warn("[MapScreen] failed to play segment", err);
+      } catch (error) {
+        console.warn("[MapScreen] failed to start story segment", error);
         setStoryStatus("Audio unavailable");
       }
     },
     [activeStory]
   );
 
-  // Auto pause when app backgrounded
+  // Auto pause story when app backgrounded
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => {
+    const subscription = AppState.addEventListener("change", (state) => {
       if (state.match(/inactive|background/) && storyPlaying) {
         void pauseStoryPlayback();
       }
     });
-
-    return () => sub.remove();
-  }, [storyPlaying, pauseStoryPlayback]);
+    return () => {
+      subscription.remove();
+    };
+  }, [pauseStoryPlayback, storyPlaying]);
 
   // Reset story state when challenge restarts
   useEffect(() => {
@@ -366,32 +404,33 @@ export default function MapScreen() {
     }
   }, [challengeStarted]);
 
-  // Hide navigation bar during challenge
+  // Hide navigation header during challenge
   useEffect(() => {
     navigation.setOptions({ headerShown: !challengeStarted });
-  }, [challengeStarted]);
+  }, [navigation, challengeStarted]);
 
-  // Challenge lock logic
   const challengeLocked = useMemo(
     () => isChallengeFullyLocked(variantCompletions),
     [variantCompletions]
   );
-
   const storyModeActive = useMemo(
-    () => Boolean(activeStory && activeStory.segmentUrls.length === STORY_SEGMENT_COUNT),
+    () =>
+      Boolean(
+        activeStory && activeStory.segmentUrls.length === STORY_SEGMENT_COUNT
+      ),
     [activeStory]
   );
-
   const variantLocked = useMemo(() => {
     if (challengeLocked) return true;
     return variantParam === "hard"
       ? variantCompletions.hard
       : variantCompletions.easy;
-  }, [variantCompletions, challengeLocked, variantParam]);
+  }, [challengeLocked, variantCompletions, variantParam]);
 
-  const canStartChallenge = locksReady && !challengeLocked && !variantLocked;
+  const canStartChallenge =
+    locksReady && !challengeLocked && !variantLocked;
 
-  // Load user progress (completions)
+  // Load player completions
   useEffect(() => {
     let active = true;
 
@@ -404,14 +443,11 @@ export default function MapScreen() {
     }
 
     setLocksReady(false);
-
     (async () => {
       try {
-        const ref = doc(db, "Users", userId, "challengeRuns", challengeId);
-        const snap = await getDoc(ref);
-
+        const runRef = doc(db, "Users", userId, "challengeRuns", challengeId);
+        const snap = await getDoc(runRef);
         if (!active) return;
-
         if (snap.exists()) {
           setVariantCompletions(extractVariantCompletion(snap.data()));
         } else {
@@ -431,53 +467,50 @@ export default function MapScreen() {
     };
   }, [challengeId, userId]);
 
-  // Alert if locked
+  // Lock alert
   useEffect(() => {
     if (!locksReady) return;
-
     if (!(challengeLocked || variantLocked)) {
       lockAlertShownRef.current = false;
       return;
     }
-
     if (lockAlertShownRef.current) return;
     lockAlertShownRef.current = true;
 
-    const msg = challengeLocked
-      ? "You've already completed this challenge on both easy and hard."
-      : `You've already completed the ${variantParam} mode.`;
+    const message = challengeLocked
+      ? "You've already completed this challenge on both easy and hard modes."
+      : `You've already completed the ${
+          variantParam === "hard" ? "hard" : "easy"
+        } mode.`;
 
-    Alert.alert("Challenge locked", msg, [
+    Alert.alert("Challenge locked", message, [
       {
         text: "OK",
-        onPress: () => router.replace("/(tabs)/challenges"),
+        onPress: () => {
+          router.replace("/(tabs)/challenges");
+        },
       },
     ]);
-  }, [locksReady, challengeLocked, variantLocked]);
+  }, [locksReady, challengeLocked, variantLocked, variantParam, router]);
 
   // Load challenge from DB
   useEffect(() => {
-    let mounted = true;
+    let isMounted = true;
     setChallengeDoc(null);
-
     (async () => {
       try {
         const id = challengeId || "default";
         const snap = await getDoc(doc(db, "challenges", id));
-
         if (!snap.exists()) {
           Alert.alert("Not found", "Challenge document does not exist.");
           return;
         }
-
         const data = snap.data() as ChallengeDoc;
-        if (!mounted) return;
+        if (!isMounted) return;
 
         setChallengeDoc(data);
         setChallengeTitle(data.title);
-        setAudioUrl(data.audioUrl);
 
-        // Determine correct variant
         const preferredVariant = readVariant(data, variantParam);
         const easyVariant =
           variantParam === "easy"
@@ -493,7 +526,6 @@ export default function MapScreen() {
           toLatLng(data.start) ??
           toLatLng(easyVariant?.start) ??
           toLatLng(hardVariant?.start);
-
         const endCandidate =
           toLatLng(preferredVariant?.end) ??
           toLatLng(data.end) ??
@@ -510,48 +542,45 @@ export default function MapScreen() {
           );
         }
 
-        // Pet / variant image
+        // choose pet/variant image
         try {
           const sel: any =
             preferredVariant ??
             readVariant(data, variantParam) ??
             easyVariant ??
             hardVariant;
-
           const petObj: any = sel?.pet ?? {};
-          const imgs: string[] | null =
-            Array.isArray(sel?.petImages)
-              ? sel.petImages
-              : Array.isArray(petObj?.images)
-              ? petObj.images
-              : null;
-
+          const imgs: string[] | null = Array.isArray(sel?.petImages)
+            ? sel.petImages
+            : Array.isArray(petObj?.images)
+            ? petObj.images
+            : null;
           const single: string | null =
             typeof sel?.petImageUrl === "string"
               ? sel.petImageUrl
               : typeof petObj?.imageUrl === "string"
               ? petObj.imageUrl
               : null;
-
           const chosen =
             imgs && imgs.length > 0 && typeof imgs[0] === "string"
               ? imgs[0]
               : single;
-
           setVariantImageUrl(chosen ?? null);
         } catch {
           setVariantImageUrl(null);
         }
-      } catch (err) {
-        Alert.alert("DB error", err?.message ?? "Failed to load challenge.");
+      } catch (e) {
+        const msg =
+          (e as any)?.message ?? "Failed to load challenge from Firestore.";
+        Alert.alert("DB error", msg);
       }
     })();
-
     return () => {
-      mounted = false;
+      isMounted = false;
     };
   }, [challengeId, variantParam]);
-  // Reset route cache when challenge changes
+
+  // clear cached route when challenge changes
   const cacheKey = `route:${challengeId || "default"}`;
   useEffect(() => {
     AsyncStorage.multiRemove([
@@ -560,13 +589,11 @@ export default function MapScreen() {
     ]).catch(() => {});
   }, [cacheKey]);
 
-  // Cleanup story audio on unmount
+  // cleanup all story sounds on unmount
   useEffect(
     () => () => {
-      storySoundsRef.current.forEach((sound) => {
-        try {
-          sound.unloadAsync();
-        } catch {}
+      storySoundsRef.current.forEach((sound: Audio.Sound) => {
+        sound.unloadAsync().catch(() => {});
       });
       storySoundsRef.current = [];
     },
@@ -576,25 +603,19 @@ export default function MapScreen() {
   // Load episodic / pet story
   useEffect(() => {
     let cancelled = false;
-
     const loadStory = async () => {
       if (!challengeId || !storyTypeSelection || !challengeDoc) {
         setActiveStory(null);
         return;
       }
-
-      const docData = challengeDoc;
-
       try {
         let story: StorySegments | null = null;
-
         if (storyTypeSelection === "pet") {
           if (storyPetValue && storyPetValue !== "pigeon") {
             setActiveStory(null);
             return;
           }
-
-          story = await loadPetStoryForVariant(docData, variantParam, {
+          story = await loadPetStoryForVariant(challengeDoc, variantParam, {
             challengeId,
           });
         } else {
@@ -602,28 +623,28 @@ export default function MapScreen() {
             challengeId,
             seasonId: storySeasonValue ?? undefined,
           });
-
-          story = episodes.find(
-            (episode) =>
-              (storySeasonValue ? episode.seasonId === storySeasonValue : true) &&
-              (storyEpisodeValue ? episode.episodeId === storyEpisodeValue : true)
-          ) ?? null;
+          story =
+            episodes.find(
+              (episode) =>
+                (storySeasonValue
+                  ? episode.seasonId === storySeasonValue
+                  : true) &&
+                (storyEpisodeValue
+                  ? episode.episodeId === storyEpisodeValue
+                  : true)
+            ) ?? null;
         }
-
-        if (!cancelled) {
-          setActiveStory(story);
-          setStoryStatus("Ready");
-          setStoryPlaying(false);
-
-          triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
-          currentStorySegmentRef.current = null;
-        }
-      } catch (err) {
-        console.warn("[MapScreen] story load failed", err);
+        if (cancelled) return;
+        setActiveStory(story);
+        setStoryStatus("Ready");
+        setStoryPlaying(false);
+        triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+        currentStorySegmentRef.current = null;
+      } catch (error) {
+        console.warn("[MapScreen] failed to load story", error);
         if (!cancelled) setActiveStory(null);
       }
     };
-
     loadStory();
     return () => {
       cancelled = true;
@@ -638,7 +659,7 @@ export default function MapScreen() {
     variantParam,
   ]);
 
-  // Permissions + initial location + watcher
+  // Permissions + watcher (start after we have DB points)
   useEffect(() => {
     if (!startPoint || !endPoint) return;
 
@@ -652,7 +673,6 @@ export default function MapScreen() {
         latitude: loc.coords.latitude,
         longitude: loc.coords.longitude,
       };
-
       setUserLocation(coords);
       setRegion({
         latitude: coords.latitude,
@@ -670,7 +690,6 @@ export default function MapScreen() {
             latitude: newLoc.coords.latitude,
             longitude: newLoc.coords.longitude,
           };
-
           setUserLocation(c);
 
           if (startPoint) setNearStart(haversineM(c, startPoint) < PROXIMITY_M);
@@ -678,21 +697,18 @@ export default function MapScreen() {
 
           if (!challengeStarted) return;
 
-          // Add distance for stats
           const stats = runStatsRef.current;
-
-          if (!stats.startAt) stats.startAt = Date.now();
-
+          if (!stats.startAt) {
+            stats.startAt = Date.now();
+          }
           if (stats.lastPoint) {
             const delta = haversineM(stats.lastPoint, c);
             if (Number.isFinite(delta) && delta > 0.2) {
               stats.distance += delta;
             }
           }
-
           stats.lastPoint = c;
 
-          // Dynamic recalc
           if (
             !lastRouteOriginRef.current ||
             haversineM(lastRouteOriginRef.current, c) > MOVE_RECALC_M
@@ -710,15 +726,13 @@ export default function MapScreen() {
     endPoint?.longitude,
   ]);
 
-  // Periodic recalc (every X sec)
+  // periodic refresh when started
   useEffect(() => {
     if (!challengeStarted || !userLocation || !endPoint) return;
-
     const t = setInterval(
       () => fetchRouteSafe(userLocation, endPoint),
       RECALC_TIMER_SEC * 1000
     );
-
     return () => clearInterval(t);
   }, [
     challengeStarted,
@@ -728,24 +742,19 @@ export default function MapScreen() {
     endPoint?.longitude,
   ]);
 
-  // Auto-stop audio when near end
+  // auto-stop story near end
   useEffect(() => {
-    if (!challengeStarted || !nearEnd) return;
-
-    if (storyModeActive) {
+    if (challengeStarted && nearEnd && storyModeActive) {
       void stopStoryPlayback();
-    } else {
-      audioRef.current?.fadeOut();
     }
   }, [challengeStarted, nearEnd, storyModeActive, stopStoryPlayback]);
 
-  // Pre-start prompt visibility
+  // nudge to go to start
   useEffect(() => {
     if (challengeStarted) {
       setShowStartPrompt(false);
       return;
     }
-
     if (startPoint && canStartChallenge) {
       setShowStartPrompt(true);
     } else {
@@ -753,30 +762,24 @@ export default function MapScreen() {
     }
   }, [challengeStarted, startPoint, canStartChallenge]);
 
-  // Reset route when stopped
+  // reset route UI if stop
   useEffect(() => {
     if (!challengeStarted) {
       setRouteCoords([]);
       setSummary(null);
       setInitialRouteDistanceM(null);
       lastRouteOriginRef.current = null;
-      setShowAudioBar(false);
     }
   }, [challengeStarted]);
 
-  // Overspeed violation → end challenge
+  // Overspeed handler: abort challenge and return home without rewards
   useEffect(() => {
-    const unsub = onChallengeViolation(async () => {
+    const off = onChallengeViolation(() => {
       if (!challengeStarted) return;
-
       setChallengeStarted(false);
-
       if (storyModeActive) {
-        await stopStoryPlayback();
-      } else {
-        audioRef.current?.fadeOut();
+        void stopStoryPlayback();
       }
-
       Alert.alert(
         "Warning",
         "Using transportation is not allowed.",
@@ -789,30 +792,25 @@ export default function MapScreen() {
         { cancelable: false }
       );
     });
-
     return () => {
       try {
-        unsub();
+        off();
       } catch {}
     };
-  }, [challengeStarted, storyModeActive, stopStoryPlayback, router]);
+  }, [challengeStarted, router, stopStoryPlayback, storyModeActive]);
 
-  // Cleanup pre-start fetcher
+  // cleanup pre-start fetcher on unmount
   useEffect(
     () => () => {
-      if (preStartAbortRef.current) {
-        preStartAbortRef.current.abort();
-      }
+      if (preStartAbortRef.current) preStartAbortRef.current.abort();
     },
     []
   );
 
-  // Fetch pre-start walking route (YOU → Start)
   const fetchPreStartRouteSafe = useCallback(
     async (origin: LatLng, destination: LatLng) => {
       const now = Date.now();
       if (now - preStartLastFetchAtRef.current < RECALC_MIN_GAP_MS) return;
-
       preStartLastFetchAtRef.current = now;
 
       if (preStartAbortRef.current) preStartAbortRef.current.abort();
@@ -832,10 +830,11 @@ export default function MapScreen() {
           signal: ac.signal,
         });
 
-        if (!res.ok) return;
+        if (!res.ok) {
+          return;
+        }
 
         const json = await res.json();
-
         const coordsLL: LatLng[] =
           json?.features?.[0]?.geometry?.coordinates?.map(
             (pt: [number, number]) => ({
@@ -847,7 +846,7 @@ export default function MapScreen() {
         setPreStartRouteCoords(coordsLL.length > 1 ? coordsLL : []);
       } catch (e: any) {
         if (e?.name !== "AbortError") {
-          console.log("Pre-start ORS failed", e);
+          console.log("Pre-start ORS fetch failed", e?.message ?? e);
         }
       } finally {
         if (preStartAbortRef.current === ac) {
@@ -858,13 +857,12 @@ export default function MapScreen() {
     []
   );
 
-  // Maintain walking route to Start (before challenge begins)
+  // keep showing a guidance route to Start (before challenge starts)
   useEffect(() => {
     if (challengeStarted) {
       setPreStartRouteCoords([]);
       preStartLastOriginRef.current = null;
       preStartLastFetchAtRef.current = 0;
-
       if (preStartAbortRef.current) {
         preStartAbortRef.current.abort();
         preStartAbortRef.current = null;
@@ -880,7 +878,6 @@ export default function MapScreen() {
     }
 
     const distanceToStart = haversineM(userLocation, startPoint);
-
     if (!Number.isFinite(distanceToStart) || distanceToStart < PROXIMITY_M) {
       setPreStartRouteCoords([]);
       preStartLastOriginRef.current = null;
@@ -888,11 +885,12 @@ export default function MapScreen() {
       return;
     }
 
-    const movedEnough =
+    const shouldFetch =
       !preStartLastOriginRef.current ||
-      haversineM(preStartLastOriginRef.current, userLocation) > MOVE_RECALC_M;
+      haversineM(preStartLastOriginRef.current, userLocation) >
+        MOVE_RECALC_M;
 
-    if (movedEnough) {
+    if (shouldFetch) {
       preStartLastOriginRef.current = userLocation;
       fetchPreStartRouteSafe(userLocation, startPoint);
     }
@@ -906,9 +904,8 @@ export default function MapScreen() {
   ]);
 
   const handleStartPromptPress = useCallback(() => {
-    if (!challengeStarted && userLocation && startPoint) {
-      fetchPreStartRouteSafe(userLocation, startPoint);
-    }
+    if (challengeStarted || !userLocation || !startPoint) return;
+    fetchPreStartRouteSafe(userLocation, startPoint);
   }, [
     challengeStarted,
     userLocation?.latitude,
@@ -918,21 +915,18 @@ export default function MapScreen() {
     fetchPreStartRouteSafe,
   ]);
 
-  // SMART ROUTE FETCH (with throttle + abort + cache)
+  // smart fetch (throttle + cancel + cache)
   const fetchRouteSafe = async (origin: LatLng, destination: LatLng) => {
     const now = Date.now();
-
     if (now - lastFetchAtRef.current < RECALC_MIN_GAP_MS) return;
     lastFetchAtRef.current = now;
 
     if (abortRef.current) abortRef.current.abort();
-
     const ac = new AbortController();
     abortRef.current = ac;
 
     try {
       setRouteLoading(true);
-
       const url =
         `https://api.openrouteservice.org/v2/directions/foot-walking` +
         `?api_key=${encodeURIComponent(ORS_API_KEY)}` +
@@ -946,13 +940,15 @@ export default function MapScreen() {
       });
 
       if (!res.ok) {
-        const txt = await res.text();
-        console.log("ORS ERROR", txt);
+        const text = await res.text();
+        console.log("ORS error", res.status, text);
+        if (res.status >= 400 && res.status !== 429) {
+          Alert.alert("Routing error", `HTTP ${res.status}: ${text.slice(0, 250)}`);
+        }
         return;
       }
 
       const json = await res.json();
-
       const coordsLL: LatLng[] =
         json?.features?.[0]?.geometry?.coordinates?.map(
           (pt: [number, number]) => ({
@@ -960,11 +956,10 @@ export default function MapScreen() {
             longitude: pt[0],
           })
         ) ?? [];
-
       const seg = json?.features?.[0]?.properties?.segments?.[0];
       const sum = json?.features?.[0]?.properties?.summary;
-
-      const nextInstruction = seg?.steps?.[0]?.instruction || undefined;
+      const nextInstruction: string | undefined =
+        seg?.steps?.[0]?.instruction || undefined;
 
       if (coordsLL.length > 1 && sum) {
         setRouteCoords(coordsLL);
@@ -973,10 +968,8 @@ export default function MapScreen() {
           durationS: sum.duration ?? 0,
           nextInstruction,
         });
-
         if (!initialRouteDistanceM)
           setInitialRouteDistanceM(sum.distance ?? 0);
-
         lastRouteOriginRef.current = origin;
 
         try {
@@ -993,30 +986,26 @@ export default function MapScreen() {
           ]);
         } catch {}
       }
-    } catch (err: any) {
-      if (err?.name !== "AbortError") {
-        console.log("ORS fetch failed", err);
-      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError")
+        console.log("ORS fetch failed", e?.message ?? e);
     } finally {
       if (abortRef.current === ac) abortRef.current = null;
       setRouteLoading(false);
     }
   };
 
-  // Split route into DONE + TODO segments
+  // split route (only after start)
   let doneSeg: LatLng[] = [];
   let todoSeg: LatLng[] = [];
-
   if (challengeStarted && routeCoords.length > 1 && userLocation) {
     const idx = nearestRouteIndex(routeCoords, userLocation);
-
     doneSeg = routeCoords.slice(0, Math.max(1, idx));
     todoSeg = routeCoords.slice(Math.max(0, idx - 1));
   }
 
   const hasPreStartRoute =
     !challengeStarted && preStartRouteCoords.length > 1;
-
   const fallbackApproachLine =
     !challengeStarted &&
     !nearStart &&
@@ -1028,7 +1017,6 @@ export default function MapScreen() {
 
   const remainingM = summary?.distanceM ?? null;
   const totalM = initialRouteDistanceM ?? null;
-
   const progress =
     remainingM !== null && totalM !== null && totalM > 0
       ? Math.min(1, Math.max(0, 1 - remainingM / totalM))
@@ -1037,14 +1025,12 @@ export default function MapScreen() {
   const totalStoryDistance = useMemo(() => {
     if (initialRouteDistanceM && initialRouteDistanceM > 0)
       return initialRouteDistanceM;
-
     if (activeStory?.distanceMeters && activeStory.distanceMeters > 0)
       return activeStory.distanceMeters;
-
     return null;
   }, [initialRouteDistanceM, activeStory?.distanceMeters]);
 
-  // Auto-play story segments based on progress
+  // trigger story segments based on progress
   useEffect(() => {
     if (
       !storyModeActive ||
@@ -1053,15 +1039,12 @@ export default function MapScreen() {
       totalStoryDistance <= 0
     )
       return;
-
     const thresholds = Array.from(
       { length: STORY_SEGMENT_COUNT },
       (_, idx) =>
         idx === 0 ? 0 : (idx * totalStoryDistance) / STORY_SEGMENT_COUNT
     );
-
     const distanceCovered = totalStoryDistance * progress;
-
     thresholds.forEach((threshold, idx) => {
       if (
         distanceCovered >= threshold &&
@@ -1077,7 +1060,8 @@ export default function MapScreen() {
     storyModeActive,
     totalStoryDistance,
   ]);
-  // Not ready yet (missing DB coordinates or location permission)
+
+  // if not ready (need DB points and location)
   if (!startPoint || !endPoint || !hasPermission || !region || !userLocation) {
     return (
       <View style={styles.center}>
@@ -1087,7 +1071,7 @@ export default function MapScreen() {
     );
   }
 
-  // Start challenge (unified version)
+  // Start challenge
   const handleStartChallenge = async () => {
     if (!canStartChallenge) {
       const lockMsg = challengeLocked
@@ -1095,53 +1079,34 @@ export default function MapScreen() {
         : `You've already completed the ${
             variantParam === "hard" ? "hard" : "easy"
           } mode.`;
-
       Alert.alert("Challenge locked", lockMsg);
       return;
     }
-
     setChallengeStarted(true);
-
-    // Background tracking start
-    beginChallengeSession();
-
-    // Reset stats
+    // start background tracking session
+    void beginChallengeSession();
     runStatsRef.current = {
       startAt: Date.now(),
       distance: 0,
       lastPoint: userLocation ?? null,
     };
-
-    // Story or classic audio
     const useStoryAudio =
       storyModeActive &&
       activeStory &&
       activeStory.segmentUrls.length === STORY_SEGMENT_COUNT;
-
     if (useStoryAudio) {
       triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
       currentStorySegmentRef.current = null;
       setStoryStatus("Ready");
       setStoryPlaying(false);
       void playSegmentAtIndex(0);
-    } else if (audioSourceUri) {
-      // regular challenge audio
-      setShowAudioBar(true);
-      setTimeout(() => {
-        audioBarRef.current?.play();
-      }, 350);
     }
-
-    if (userLocation && endPoint) {
-      await fetchRouteSafe(userLocation, endPoint);
-    }
+    if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
   };
 
-  // Final render
   return (
     <View style={styles.container}>
       <MapView style={styles.map} region={region} showsUserLocation>
-        {/* Pre-start walking route */}
         {hasPreStartRoute && (
           <Polyline
             coordinates={preStartRouteCoords}
@@ -1149,8 +1114,6 @@ export default function MapScreen() {
             strokeColor="#2F80ED"
           />
         )}
-
-        {/* fallback straight line */}
         {!challengeStarted && fallbackApproachLine && (
           <Polyline
             coordinates={fallbackApproachLine}
@@ -1159,18 +1122,15 @@ export default function MapScreen() {
             lineDashPattern={[6, 6]}
           />
         )}
-
-        {/* After challenge starts — done segment */}
+        {/* Route after start only */}
         {challengeStarted && doneSeg.length > 1 && (
           <Polyline
             coordinates={doneSeg}
             strokeWidth={6}
-            strokeColor="rgba(47,128,237,0.3)"
+            strokeColor="rgba(47, 128, 237, 0.3)"
             lineCap="round"
           />
         )}
-
-        {/* After challenge starts — todo segment */}
         {challengeStarted && todoSeg.length > 1 && (
           <Polyline
             coordinates={todoSeg}
@@ -1180,15 +1140,12 @@ export default function MapScreen() {
           />
         )}
 
-        {/* Start marker */}
         <Marker coordinate={startPoint} title="Start" zIndex={2000}>
           <Image
             source={require("../../assets/images/start-flag.png")}
             style={styles.icon}
           />
         </Marker>
-
-        {/* End marker */}
         <Marker coordinate={endPoint} title="Goal" zIndex={2000}>
           <Image
             source={require("../../assets/images/End_Point.png")}
@@ -1196,7 +1153,7 @@ export default function MapScreen() {
           />
         </Marker>
 
-        {/* YOU marker with pulse */}
+        {/* YOU marker with pulsing aura */}
         <Marker
           coordinate={userLocation}
           anchor={{ x: 0.5, y: 0.5 }}
@@ -1213,7 +1170,6 @@ export default function MapScreen() {
         </Marker>
       </MapView>
 
-      {/* Start prompt (walk to Start) */}
       {showStartPrompt && !challengeStarted && canStartChallenge && (
         <TouchableOpacity
           activeOpacity={0.9}
@@ -1221,13 +1177,11 @@ export default function MapScreen() {
           onPress={handleStartPromptPress}
         >
           <Text style={styles.startPromptTitle}>Head to the start point</Text>
-
           <Text style={styles.startPromptMessage}>
             {nearStart
               ? "You're in range. Tap Start when you're ready."
               : "Follow the blue line to reach the starting flag."}
           </Text>
-
           <Text style={styles.startPromptCta}>
             {nearStart
               ? "Tap Start below to begin."
@@ -1253,18 +1207,18 @@ export default function MapScreen() {
 
             if (storyModeActive) {
               await stopStoryPlayback();
-            } else {
-              audioBarRef.current?.fadeOut();
             }
 
-            let sessionTotals = { steps: 0, calories: 0 };
-
+            // finalize background tracking session and persist metrics
+            let sessionTotals: { steps: number; calories: number } = {
+              steps: 0,
+              calories: 0,
+            };
             try {
               sessionTotals = await endChallengeSessionAndPersist();
             } catch {}
 
             const stats = runStatsRef.current;
-
             const durationSec =
               stats.startAt !== null
                 ? Math.max(
@@ -1272,58 +1226,54 @@ export default function MapScreen() {
                     Math.round((Date.now() - stats.startAt) / 1000)
                   )
                 : null;
-
-            let dist = stats.distance;
-
+            let distanceM = stats.distance;
             if (stats.lastPoint && userLocation) {
               const tail = haversineM(stats.lastPoint, userLocation);
-              if (Number.isFinite(tail)) dist += tail;
+              if (Number.isFinite(tail)) distanceM += tail;
             }
-
             const roundedDistance =
-              Number.isFinite(dist) && dist > 0
-                ? Math.round(dist)
+              Number.isFinite(distanceM) && distanceM > 0
+                ? Math.round(distanceM)
                 : null;
 
-            const params: Record<string, string> = {};
-
-            if (variantParam) params.variant = variantParam;
-            if (challengeTitle) params.title = challengeTitle;
+            const baseParams: Record<string, string> = {};
+            if (variantParam) baseParams.variant = variantParam;
+            if (challengeTitle) baseParams.title = challengeTitle;
             if (durationSec !== null)
-              params.durationSec = String(durationSec);
+              baseParams.durationSec = String(durationSec);
             if (roundedDistance !== null)
-              params.distanceM = String(roundedDistance);
-            if (challengeId) params.challengeId = challengeId;
-
+              baseParams.distanceM = String(roundedDistance);
             if (Number.isFinite(sessionTotals.steps))
-              params.actualSteps = String(
+              baseParams.actualSteps = String(
                 Math.max(0, Math.round(sessionTotals.steps))
               );
             if (Number.isFinite(sessionTotals.calories))
-              params.actualCalories = String(
+              baseParams.actualCalories = String(
                 Math.max(0, Math.round(sessionTotals.calories))
               );
-
-            if (variantImageUrl)
-              params.imageUrl = variantImageUrl;
+            if (challengeId) baseParams.challengeId = challengeId;
+            if (variantImageUrl) baseParams.imageUrl = variantImageUrl;
 
             if (userId && activeStory) {
               try {
                 await saveStoryCompletion(userId, activeStory);
-              } catch (err) {
-                console.warn("Failed to save story completion", err);
+              } catch (error) {
+                console.warn(
+                  "[MapScreen] failed to save story completion",
+                  error
+                );
               }
             }
 
             router.push({
               pathname: "/ChallengesPages/ARPetScreen",
-              params,
+              params: baseParams,
             });
           }}
         />
       )}
 
-      {/* Start button (must be inside 50m) */}
+      {/* Start only when inside radius and not locked */}
       {!challengeStarted && nearStart && canStartChallenge && (
         <TouchableOpacity
           style={styles.startBtn}
@@ -1335,39 +1285,25 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Audio bar */}
-      {audioSourceUri && (
+      {/* Bottom audio bar — story mode ONLY */}
+      {storyModeActive && activeStory && (
         <AudioBar
           ref={audioBarRef}
-          title={
-            storyModeActive && activeStory
-              ? activeStory.title
-              : challengeTitle || "The Lost Letter"
-          }
-          source={
-            storyModeActive
-              ? undefined
-              : { uri: audioSourceUri }
-          }
-          visible={
-            challengeStarted &&
-            (!storyModeActive || Boolean(activeStory))
-          }
-          controlledState={
-            storyModeActive
-              ? {
-                  isPlaying: storyPlaying,
-                  statusText: storyStatus,
-                  onPlay: () => void resumeStoryPlayback(),
-                  onPause: () => void pauseStoryPlayback(),
-                }
-              : undefined
-          }
+          title={activeStory.title}
+          source={undefined}
+          visible={challengeStarted}
+          controlledState={{
+            isPlaying: storyPlaying,
+            statusText: storyStatus,
+            onPlay: () => void resumeStoryPlayback(),
+            onPause: () => void pauseStoryPlayback(),
+          }}
         />
       )}
     </View>
   );
-  
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   map: { flex: 1 },
@@ -1384,7 +1320,6 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     backgroundColor: "#78C8F9",
   },
-
   youBubble: {
     backgroundColor: "#9ADAF8",
     paddingVertical: 6,
@@ -1393,7 +1328,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#6CC3E0",
   },
-
   youText: { color: "#1B5C79", fontWeight: "800" },
 
   startBtn: {
@@ -1409,7 +1343,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
   },
-
   btnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
 
   startPromptCard: {
@@ -1428,19 +1361,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     zIndex: 50,
   },
-
-  startPromptTitle: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-
-  startPromptMessage: {
-    color: "#E5E7EB",
-    fontSize: 14,
-    marginTop: 6,
-  },
-
+  startPromptTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  startPromptMessage: { color: "#E5E7EB", fontSize: 14, marginTop: 6 },
   startPromptCta: {
     color: "#93C5FD",
     fontSize: 13,
@@ -1448,5 +1370,3 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 });
-
-
