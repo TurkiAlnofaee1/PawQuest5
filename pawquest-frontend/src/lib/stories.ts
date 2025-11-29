@@ -11,24 +11,15 @@ import {
 import { db } from "./firebase";
 
 export type StoryType = "pet" | "season";
-/**
- * Number of audio segments each story should have.
- * If fewer are provided, we pad using the last one.
- */
+
 export const STORY_SEGMENT_COUNT = 5;
 
-/**
- * Canonical shape for a playable story (pet or season).
- * `segmentUrls` is the ordered list of audio clips.
- */
 export type StorySegments = {
   id: string;
-  /** Used to identify progress rows per story (pet or season episode). */
   progressKey: string;
   type: StoryType;
   challengeId: string;
   variantId: "easy" | "hard";
-  /** Currently only "pigeon", but kept generic for future pets. */
   petKey?: "pigeon";
   seasonId?: string;
   episodeId?: string;
@@ -41,7 +32,6 @@ export type StorySegments = {
   estimatedTimeMin?: number;
   calories?: number;
   hiitType?: string;
-  /** Set from DB to indicate if the user finished this story. */
   completed?: boolean;
   seasonTitle?: string;
 };
@@ -56,36 +46,24 @@ type LoadSeasonOpts = {
   challengeId?: string;
   distanceMeters?: number;
   estimatedTimeMin?: number;
-  /** Optional override; if omitted, we fall back to DEFAULT_STORY_SEASON. */
   seasonId?: string;
 };
 
 const STORY_PROGRESS_COLLECTION = "storyProgress";
 const DEFAULT_STORY_SEASON = "Story Season 1";
 const STORY_SERIES_COLLECTION = "Story Series";
-/**
- * Keys we treat as potential "segment index" fields (segment1, clip_2, etc.).
- */
 const SEGMENT_KEY_PATTERN = /(part|segment|clip|index|\d)/i;
-/**
- * Ensure we only accept finite numbers; otherwise return undefined.
- */
+
 const sanitizeNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
-/**
- * Try to infer an episode number from a string id (e.g., "ep3" => 3).
- */
+
 const parseEpisodeNumber = (id: string): number | undefined => {
   const match = id.match(/(\d+)/);
   if (!match) return undefined;
   const num = Number(match[1]);
   return Number.isFinite(num) ? num : undefined;
 };
-/**
- * Deduplicate/clean a list of segment URLs, then:
- *  - truncate to STORY_SEGMENT_COUNT
- *  - pad by repeating the last segment until we reach STORY_SEGMENT_COUNT
- */
+
 const uniqueSegments = (list: string[]): string[] => {
   const seen = new Set<string>();
   const clean: string[] = [];
@@ -103,15 +81,7 @@ const uniqueSegments = (list: string[]): string[] => {
   }
   return trimmed;
 };
-/**
- * Extract segment URLs from a flexible structure:
- * - array of URLs
- * - object with segmentUrls/index/segments/... fields
- * - object with keys like segment1, clip2, part3...
- * - plain string
- *
- * Always returns a cleaned, deduplicated list.
- */
+
 const extractIndexedSegments = (raw: unknown): string[] => {
   if (!raw) return [];
   if (Array.isArray(raw)) {
@@ -121,14 +91,12 @@ const extractIndexedSegments = (raw: unknown): string[] => {
   }
   if (typeof raw === "object") {
     const record = raw as Record<string, unknown>;
-    // Common nested shapes: { segmentUrls: [...] } or { index: [...] }
     if (Array.isArray(record.segmentUrls)) {
       return extractIndexedSegments(record.segmentUrls);
     }
     if (record.index) {
       return extractIndexedSegments(record.index);
     }
-    // Generic object: pick keys that look like segments (segment1, clip_2, etc.)
     const entries: { idx: number; value: string }[] = [];
     Object.entries(record).forEach(([key, value]) => {
       if (typeof value !== "string" || value.trim().length === 0) return;
@@ -144,11 +112,7 @@ const extractIndexedSegments = (raw: unknown): string[] => {
   }
   return [];
 };
-/**
- * Build a stable progress key that we use to store completion in Firestore.
- * - Pet stories:  "pet:<petKey>"
- * - Season story: "season:<seasonId>:<episodeId>"
- */
+
 const getStoryProgressKey = (story: {
   type: StoryType;
   petKey?: string;
@@ -160,9 +124,7 @@ const getStoryProgressKey = (story: {
   }
   return `season:${story.seasonId ?? "season"}:${story.episodeId ?? "episode"}`;
 };
-/**
- * Attach id + progressKey to a story. If id is missing, we reuse progressKey.
- */
+
 const withStoryMetadata = (
   story: Omit<StorySegments, "progressKey" | "id"> & Partial<Pick<StorySegments, "id">>,
 ): StorySegments => {
@@ -173,18 +135,11 @@ const withStoryMetadata = (
     progressKey,
   };
 };
-/**
- * Collect the pet story segments for a challenge variant.
- * Priority:
- *  1. variant.pigeonStory
- *  2. challengeDoc.pigeonStory
- *  3. variant itself as a generic container
- */
+
 const collectPetSegments = (variant: Record<string, unknown>, challengeDoc: any): string[] => {
   const sources: unknown[] = [];
   if (variant?.pigeonStory) sources.push((variant as any).pigeonStory);
   if (challengeDoc?.pigeonStory) sources.push(challengeDoc.pigeonStory);
-  // fallback: try to parse segments from the whole variant object
   sources.push(variant);
   const urls: string[] = [];
   sources.forEach((source) => {
@@ -193,14 +148,7 @@ const collectPetSegments = (variant: Record<string, unknown>, challengeDoc: any)
   });
   return uniqueSegments(urls);
 };
-/**
- * Load the default pet story (e.g., pigeon) for a given challenge + variant.
- *
- * It:
- *  - pulls segments from challenge/variant fields (pigeonStory, etc.)
- *  - builds a nice title based on rewardPet or pigeonStory.title
- *  - wires up distance/time and optional HIIT metadata
- */
+
 export const loadPetStoryForVariant = async (
   challengeDoc: any,
   variantId: "easy" | "hard",
@@ -241,15 +189,7 @@ export const loadPetStoryForVariant = async (
     episodeId: "pigeon",
   });
 };
-/**
- * Load season-style story episodes for a variant, with a flexible data model:
- *
- * 1. Try a Firestore collection with id = seasonId (or DEFAULT_STORY_SEASON).
- * 2. If empty, try a single "Story Series" doc with that id.
- * 3. If still empty and no seasonId was provided, load ALL Story Series docs.
- *
- * Returns a unified, deduped list of StorySegments sorted by episodeNumber/title.
- */
+
 export const loadSeasonEpisodesForVariant = async (
   variantId: "easy" | "hard",
   options: LoadSeasonOpts = {},
@@ -270,9 +210,6 @@ export const loadSeasonEpisodesForVariant = async (
     });
   };
 
-  /**
-   * Load episodes from a Firestore collection where each document is an episode.
-   */
   const loadFromCollection = async (collectionId: string) => {
     try {
       const ref = collection(db, collectionId);
@@ -318,9 +255,6 @@ export const loadSeasonEpisodesForVariant = async (
     }
   };
 
-    /**
-   * Build episodes from a "Story Series" doc where each field is an episode.
-   */
   const buildEpisodesFromSeriesDoc = (
     seriesId: string,
     raw: Record<string, unknown>,
@@ -365,9 +299,7 @@ export const loadSeasonEpisodesForVariant = async (
     });
     return out;
   };
-  /**
-   * Try loading a specific "Story Series" doc by id.
-   */
+
   const loadFromSeriesDoc = async (seriesId: string | null) => {
     if (!seriesId) return;
     try {
@@ -380,10 +312,6 @@ export const loadSeasonEpisodesForVariant = async (
     }
   };
 
-    /**
-   * Fallback: load episodes from all "Story Series" docs
-   * (used only when no specific seasonKey is provided and nothing else was found).
-   */
   const loadAllSeriesDocs = async () => {
     try {
       const ref = collection(db, STORY_SERIES_COLLECTION);
@@ -395,18 +323,15 @@ export const loadSeasonEpisodesForVariant = async (
       // ignore
     }
   };
-  // 1) Try collection-based episodes.
+
   await loadFromCollection(seasonCollectionId);
-  
-  // 2) If none, try the corresponding Story Series doc.
   if (episodes.length === 0) {
     await loadFromSeriesDoc(seasonCollectionId);
   }
-  // 3) If still none and no explicit season was requested, load all series docs.
   if (episodes.length === 0 && seasonKey.length === 0) {
     await loadAllSeriesDocs();
   }
-  // Final ordering for UI.
+
   return episodes.sort((a, b) => {
     const aNum = a.episodeNumber ?? 0;
     const bNum = b.episodeNumber ?? 0;
@@ -414,13 +339,7 @@ export const loadSeasonEpisodesForVariant = async (
     return aNum - bNum;
   });
 };
-/**
- * Load all story completion entries for a user.
- * For pet stories, we optionally filter by challengeId so that completion
- * can be per-challenge if needed.
- *
- * Returns: { [progressKey]: true } for completed stories.
- */
+
 export const loadUserStoryProgress = async (
   userId: string | null,
   variantId: string,
@@ -434,8 +353,6 @@ export const loadUserStoryProgress = async (
   snap.forEach((docSnap) => {
     const data = docSnap.data() as Record<string, unknown>;
     const type: StoryType = data.type === "season" ? "season" : "pet";
-
-    // Pet stories can be tied to a specific challenge.
     if (type === "pet" && challengeId && typeof data.challengeId === "string") {
       if (data.challengeId !== challengeId) return;
     }
@@ -456,10 +373,6 @@ export const loadUserStoryProgress = async (
   return progress;
 };
 
-/**
- * Save that a user has completed a given story (pet or season episode).
- * We include variantId in the docId so completion can be per-variant.
- */
 export const saveStoryCompletion = async (userId: string | null, story: StorySegments) => {
   if (!userId) return;
   const docId = `${userId}_${story.progressKey}_${story.variantId}`;
@@ -482,9 +395,6 @@ export const saveStoryCompletion = async (userId: string | null, story: StorySeg
   );
 };
 
-/**
- * Build a short human-readable summary for UI (e.g., in the picker card).
- */
 export const describeSegmentsMeta = (story?: StorySegments | null) => {
   if (!story) return "5 Story Segments • Triggered every 20%";
   const tokens: string[] = [`${story.segmentUrls.length} Story Segments`];
