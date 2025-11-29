@@ -1,6 +1,3 @@
-// FULL UPDATED QuickChallengeDetails.tsx
-// Story Picker + Herb of Dawn kept, Stories + No Audio added inside Story Picker
-
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -13,37 +10,42 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
-  FlatList,
-  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { doc, onSnapshot, getDoc, collection, getDocs } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "@/src/lib/firebase";
 import { PET_MAX_LEVEL, PET_XP_PER_LEVEL } from "@/src/lib/playerProgress";
 import { loadStoryPickerData, SeasonSection, StoryOption } from "@/src/lib/storyPicker";
 
 const bgImage = require("../../assets/images/ImageBackground.jpg");
-
 const QUICK_CHALLENGE_ID = "quick-challenge";
 const QUICK_VARIANT_ID: "easy" | "hard" = "easy";
 
-type QuickAudio = {
-  id: string;
-  title: string;
-  uri: string;
+const serializeStoryForRun = (story: StoryOption | null): string | null => {
+  if (!story) return null;
+  const { locked, ...payload } = story;
+  try {
+    return encodeURIComponent(JSON.stringify(payload));
+  } catch {
+    return null;
+  }
 };
 
 export default function QuickChallengeDetails() {
   const router = useRouter();
   const uid = auth.currentUser?.uid ?? null;
 
-  /* -------------------------------
-      Equipped Pet
-  ------------------------------- */
+  // Equipped pet
   const [equippedPetId, setEquippedPetId] = useState<string | null>(null);
-  const [equippedPet, setEquippedPet] = useState<any>(null);
+  const [equippedPet, setEquippedPet] = useState<{
+    id: string;
+    name?: string | null;
+    imageUrl?: string | null;
+    images?: string[] | null;
+    xp?: number | null;
+    evoLevel?: number | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -59,47 +61,49 @@ export default function QuickChallengeDetails() {
       setEquippedPet(null);
       return;
     }
-    const unsubPet = onSnapshot(
-      doc(db, "Users", uid, "pets", equippedPetId),
-      (snap) => {
-        if (!snap.exists()) return setEquippedPet(null);
-        const d = snap.data() as any;
-        const xp = typeof d?.xp === "number" ? d.xp : 0;
-        const evoLvl = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
-
-        const imgs: string[] = Array.isArray(d?.images)
-          ? d.images.filter((u: any) => typeof u === "string" && u.length > 0)
-          : [];
-
-        const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
-        const stageName = ["Baby", "Big", "King"][Math.min(2, stageIdx)] ?? "Baby";
-        const baseName = (d?.name ?? "Pet").toString();
-
-        setEquippedPet({ id: snap.id, ...d, name: `${stageName} ${baseName}` });
+    const unsubPet = onSnapshot(doc(db, "Users", uid, "pets", equippedPetId), (snap) => {
+      if (!snap.exists()) {
+        setEquippedPet(null);
+        return;
       }
-    );
+      const d = snap.data() as any;
+      const xp = typeof d?.xp === "number" ? d.xp : 0;
+      const evoLvl = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
+      const imgs: string[] = Array.isArray(d?.images)
+        ? d.images.filter((u: any) => typeof u === "string" && u.length > 0)
+        : [];
+      const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
+      const stageName = ["Baby", "Big", "King"][Math.min(2, stageIdx)] ?? "Baby";
+      const baseName = (d?.name ?? "Pet").toString();
+      setEquippedPet({ id: snap.id, ...d, name: `${stageName} ${baseName}` });
+    });
     return () => unsubPet();
   }, [uid, equippedPetId]);
 
   const levelInfo = useMemo(() => {
     if (!equippedPet) {
-      return { level: 0, progressPct: 0, remainXp: PET_XP_PER_LEVEL, atMax: false };
+      return {
+        level: 0,
+        progressPct: 0,
+        remainXp: PET_XP_PER_LEVEL,
+        atMax: false,
+      };
     }
-    const xp = equippedPet.xp ?? 0;
-    const evoLevel = Math.floor(xp / PET_XP_PER_LEVEL);
+    const xp = typeof equippedPet.xp === "number" ? equippedPet.xp : 0;
+    const evoLevelRaw = Math.floor(xp / PET_XP_PER_LEVEL);
+    const evoLevel = Math.min(PET_MAX_LEVEL, evoLevelRaw);
     const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
+    const atMax = evoLevel >= PET_MAX_LEVEL;
+    const remain = atMax ? 0 : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0);
     return {
       level: evoLevel,
-      progressPct: progress,
-      remainXp: PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0),
-      atMax: evoLevel >= PET_MAX_LEVEL,
+      progressPct: Math.max(0, Math.min(1, progress)),
+      remainXp: remain,
+      atMax,
     };
   }, [equippedPet]);
 
-  /* -------------------------------
-      STORY PICKER SYSTEM
-      (FireStore Stories/Season/Episodes)
-  ------------------------------- */
+  // Stories
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
   const [storySections, setStorySections] = useState<SeasonSection[]>([]);
   const [flatStoryOptions, setFlatStoryOptions] = useState<StoryOption[]>([]);
@@ -121,26 +125,30 @@ export default function QuickChallengeDetails() {
           includePetStory: false,
           includeSeasonSeries: true,
         });
-
         if (!active) return;
         setStorySections(result.seasonSections);
         setFlatStoryOptions(result.flatStoryOptions);
-
         setSelectedStoryKey((prev) => {
           if (
             prev &&
             result.flatStoryOptions.some(
-              (s) => s.progressKey === prev && !s.locked,
+              (story) => story.progressKey === prev && !story.locked,
             )
           ) {
             return prev;
           }
-          return result.flatStoryOptions.find((s) => !s.locked)?.progressKey ?? null;
+          return result.flatStoryOptions.find((story) => !story.locked)?.progressKey ?? null;
         });
-      } catch (err) {
-        setStorySections([]);
-        setFlatStoryOptions([]);
-        setSelectedStoryKey(null);
+      } catch (error) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("[QuickChallenge] Failed to load Story Series", error);
+        }
+        if (active) {
+          setStorySections([]);
+          setFlatStoryOptions([]);
+          setSelectedStoryKey(null);
+        }
       } finally {
         if (active) setStoriesLoading(false);
       }
@@ -152,176 +160,35 @@ export default function QuickChallengeDetails() {
   }, [uid]);
 
   const selectedStory = useMemo(
-    () => flatStoryOptions.find((s) => s.progressKey === selectedStoryKey) ?? null,
-    [flatStoryOptions, selectedStoryKey]
+    () =>
+      flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ?? null,
+    [flatStoryOptions, selectedStoryKey],
   );
 
-  const storyBarLabel =
-    hasUserChosenStory && selectedStory
-      ? `Story: ${selectedStory.title}`
-      : "Choose a Story";
+  const storyBarLabel = useMemo(() => {
+    if (hasUserChosenStory && selectedStory) return `Story: ${selectedStory.title}`;
+    return "Choose a Story";
+  }, [hasUserChosenStory, selectedStory]);
 
-  const handleSelectStory = (story: StoryOption) => {
+  const handleSelectStory = useCallback((story: StoryOption) => {
     if (story.locked) {
-      Alert.alert("Locked Episode", "Finish the previous episode first.");
+      Alert.alert("Locked Episode", "Finish the previous episode to unlock this one.");
       return;
     }
     setHasUserChosenStory(true);
     setSelectedStoryKey(story.progressKey);
     setStoryPickerOpen(false);
-  };
-
-  /* -------------------------------
-      AUDIO STATE FOR QuickRun
-      (used by Stories + No Audio)
-  ------------------------------- */
-  const [selectedAudio, setSelectedAudio] = useState<QuickAudio | null>(null);
-
-  /* -------------------------------
-      HERB OF DAWN — CLEAN + ORDERED
-      (kept as is, NOT touched)
-  ------------------------------- */
-
-  const [audioPickerOpen, setAudioPickerOpen] = useState(false); // no longer used in UI
-  const [pickerStep, setPickerStep] = useState<"root" | "herb" | "stories">("root");
-  const [seriesOptions, setSeriesOptions] = useState<
-    { episodeKey: string; episodeLabel: string; parts: QuickAudio[] }[]
-  >([]);
-  const [storiesOptions, setStoriesOptions] = useState<QuickAudio[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  // Herb of Dawn loader (unchanged)
-  const loadHerbOfDawn = async () => {
-    if (seriesOptions.length > 0) {
-      setPickerStep("herb");
-      return;
-    }
-    setLoading(true);
-    try {
-      const ref = doc(db, "Story Series", "The herb of dawn");
-      const snap = await getDoc(ref);
-
-      if (!snap.exists()) {
-        console.log("❌ Herb of Dawn not found");
-        setSeriesOptions([]);
-        setPickerStep("herb");
-        return;
-      }
-
-      const data = snap.data() as Record<string, any>;
-
-      const orderedEpisodes = [
-        "Episode1",
-        "Episode2",
-        "Episode3",
-        "Episode4",
-        "Episode5",
-      ];
-
-      const grouped = orderedEpisodes
-        .filter((ep) => data[ep])
-        .map((episodeKey, i) => {
-          const rawParts = data[episodeKey];
-          const parts: QuickAudio[] = [];
-
-          if (Array.isArray(rawParts)) {
-            rawParts.forEach((url, idx) => {
-              if (typeof url === "string" && url.length > 0) {
-                parts.push({
-                  id: `${episodeKey}-part-${idx}`,
-                  title: `Part ${idx + 1}`,
-                  uri: url,
-                });
-              }
-            });
-          }
-
-          return {
-            episodeKey,
-            episodeLabel: `Episode ${i + 1}`,
-            parts,
-          };
-        });
-
-      setSeriesOptions(grouped);
-      setPickerStep("herb");
-    } catch (err) {
-      console.error("🔥 Error loading Herb of Dawn:", err);
-      setSeriesOptions([]);
-      setPickerStep("herb");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Stories loader (AI saved) — reused both by old audio system and new Story Picker section
-  const loadStories = async () => {
-    if (storiesOptions.length > 0) {
-      setPickerStep("stories");
-      return;
-    }
-    setLoading(true);
-    try {
-      const snap = await getDocs(collection(db, "stories"));
-      const list: QuickAudio[] = [];
-
-      snap.forEach((docSnap) => {
-        const raw = docSnap.data() as any;
-        const uri = raw?.audioUrl || raw?.audioURI || raw?.audio;
-        if (typeof uri === "string" && uri.length > 0) {
-          list.push({
-            id: docSnap.id,
-            title: String(raw?.title ?? "Story"),
-            uri,
-          });
-        }
-      });
-
-      setStoriesOptions(list);
-      setPickerStep("stories");
-    } catch {
-      setStoriesOptions([]);
-      setPickerStep("stories");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // When Story Picker opens, make sure audio "Stories" are loaded once
-  useEffect(() => {
-    if (storyPickerOpen && storiesOptions.length === 0) {
-      loadStories().catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storyPickerOpen]);
-
-  /* -------------------------------
-      Start Quick Run
-  ------------------------------- */
-  const handleStart = () => {
-    router.push({
-      pathname: "/ChallengesPages/QuickRun",
-      params: {
-        audioUri: selectedAudio ? selectedAudio.uri : "",
-        audioTitle: selectedAudio ? selectedAudio.title : "",
-      },
-    });
-  };
-
-  /* -------------------------------
-      FINAL UI
-  ------------------------------- */
+  }, []);
 
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={styles.safe}>
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.h1}>Quick Challenge</Text>
           <Text style={styles.h2}>Start anywhere. Finish anytime.</Text>
         </View>
 
-        {/* Equipped pet */}
+        {/* Equipped pet summary */}
         {equippedPet ? (
           <View style={styles.petCard}>
             <View style={styles.petRow}>
@@ -349,19 +216,23 @@ export default function QuickChallengeDetails() {
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.petTitle}>Equipped Pet</Text>
                 <Text style={styles.petName} numberOfLines={1}>
-                  {(equippedPet.name ?? "Pet").toUpperCase()}
+                  {(equippedPet.name ?? "Pet").toString().toUpperCase()}
                 </Text>
-
-                {/* Level progress */}
                 {(() => {
-                  const stageIdx = Math.min(
-                    2,
-                    Math.floor((equippedPet.xp ?? 0) / PET_XP_PER_LEVEL),
-                  );
-                  const atMax = stageIdx >= 2;
+                  const xpNow =
+                    typeof equippedPet?.xp === "number" ? equippedPet.xp : 0;
+                  const evo = Math.floor(xpNow / PET_XP_PER_LEVEL);
+                  const imgs: string[] = Array.isArray(equippedPet?.images)
+                    ? (equippedPet!.images as string[]).filter(
+                        (u) => typeof u === "string" && u.length > 0,
+                      )
+                    : [];
+                  const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : 0;
+                  const atMaxStage = stageIdx >= 2;
+                  const displayLvl = stageIdx + 1;
                   return (
                     <>
-                      {!atMax && (
+                      {!atMaxStage && (
                         <View style={styles.progressBar}>
                           <View
                             style={[
@@ -372,9 +243,9 @@ export default function QuickChallengeDetails() {
                         </View>
                       )}
                       <Text style={styles.levelText}>
-                        {atMax
+                        {atMaxStage
                           ? "Lvl 3 MAX!"
-                          : `Lvl ${stageIdx + 1} · Next in ${levelInfo.remainXp} XP`}
+                          : `Lvl ${displayLvl} · Next in ${levelInfo.remainXp} XP`}
                       </Text>
                     </>
                   );
@@ -392,7 +263,7 @@ export default function QuickChallengeDetails() {
         <Pressable
           onPress={() => {
             if (!flatStoryOptions.length) {
-              Alert.alert("No stories", "Story Series episodes coming soon.");
+              Alert.alert("No stories", "Story Series episodes will appear here soon.");
               return;
             }
             setStoryPickerOpen(true);
@@ -407,23 +278,50 @@ export default function QuickChallengeDetails() {
           )}
         </Pressable>
 
-        {/* Cards */}
         <View style={styles.card}>
           <Text style={styles.title}>How it works</Text>
           <Text style={styles.item}>- Tap Start to begin tracking.</Text>
-          <Text style={styles.item}>- Your distance is recorded on the map.</Text>
-          <Text style={styles.item}>- Tap Finish whenever you’re done.</Text>
+          <Text style={styles.item}>
+            - Your position and distance are recorded on the map.
+          </Text>
+          <Text style={styles.item}>- Tap Finish whenever you're done.</Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.title}>XP Rules</Text>
-          <Text style={styles.item}>- 1 XP per 5 steps.</Text>
-          <Text style={styles.item}>- Only equipped pet evolves.</Text>
+          <Text style={styles.item}>- You earn 1 XP for every 5 steps.</Text>
+          <Text style={styles.item}>
+            - Partial kms don’t count (1.5 km → 1 km).
+          </Text>
+          <Text style={styles.item}>- Only your equipped pet evolves.</Text>
         </View>
 
-        {/* Start Button */}
         <Pressable
-          onPress={handleStart}
+          onPress={() => {
+            if (flatStoryOptions.length > 0 && !selectedStory) {
+              Alert.alert("Choose a Story", "Select an unlocked story before starting.");
+              return;
+            }
+            Alert.alert(
+              "Ready to start?",
+              selectedStory
+                ? `Start "${selectedStory.title}"?`
+                : "Start this quick challenge?",
+              [
+                { text: "Not yet", style: "cancel" },
+                {
+                  text: "Yes, start",
+                  onPress: () => {
+                    const storyParam = serializeStoryForRun(selectedStory ?? null);
+                    router.push({
+                      pathname: "/ChallengesPages/QuickRun",
+                      params: storyParam ? { story: storyParam } : {},
+                    });
+                  },
+                },
+              ],
+            );
+          }}
           style={({ pressed }) => [
             styles.startBtn,
             pressed && { transform: [{ scale: 0.98 }] },
@@ -432,7 +330,7 @@ export default function QuickChallengeDetails() {
           <Text style={styles.startText}>Start</Text>
         </Pressable>
 
-        {/* Story Picker Modal (now includes Stories + No Audio at bottom) */}
+        {/* Story picker modal */}
         <Modal
           visible={storyPickerOpen}
           transparent
@@ -447,39 +345,43 @@ export default function QuickChallengeDetails() {
               <Text style={styles.modalTitle}>Choose a Story</Text>
               <ScrollView style={{ maxHeight: 320 }}>
                 {storiesLoading ? (
-                  <Text style={styles.modalEmpty}>Loading...</Text>
+                  <Text style={styles.modalEmpty}>Loading stories...</Text>
                 ) : flatStoryOptions.length === 0 ? (
                   <Text style={styles.modalEmpty}>No stories found</Text>
                 ) : (
-                  <>
-                    {/* Seasons / Episodes (Herb-style story picker) */}
-                    {storySections.map((section) => {
-                      const expanded = expandedSeasonId === section.seasonId;
-                      return (
-                        <View key={section.seasonId} style={styles.modalSeason}>
-                          <Pressable
-                            onPress={() =>
-                              setExpandedSeasonId(expanded ? null : section.seasonId)
-                            }
-                          >
-                            <View style={styles.modalHeaderRow}>
-                              <View style={{ flexShrink: 1 }}>
-                                <Text style={styles.modalSectionTitle}>{section.title}</Text>
-                                <Text style={styles.modalSectionSubtitle}>
-                                  {section.episodes.length} Episodes
-                                </Text>
-                              </View>
-                              <Ionicons
-                                name={expanded ? "chevron-up" : "chevron-down"}
-                                size={18}
-                                color="#0B3D1F"
-                              />
+                  storySections.map((section) => {
+                    const expanded = expandedSeasonId === section.seasonId;
+                    return (
+                      <View key={section.seasonId} style={styles.modalSeason}>
+                        <Pressable
+                          onPress={() =>
+                            setExpandedSeasonId(
+                              expanded ? null : section.seasonId,
+                            )
+                          }
+                        >
+                          <View style={styles.modalHeaderRow}>
+                            <View style={{ flexShrink: 1 }}>
+                              <Text style={styles.modalSectionTitle}>
+                                {section.title}
+                              </Text>
+                              <Text style={styles.modalSectionSubtitle}>
+                                {section.episodes.length} Episode
+                                {section.episodes.length === 1 ? "" : "s"}
+                              </Text>
                             </View>
-                          </Pressable>
+                            <Ionicons
+                              name={expanded ? "chevron-up" : "chevron-down"}
+                              size={18}
+                              color="#0B3D1F"
+                            />
+                          </View>
+                        </Pressable>
 
-                          {expanded &&
-                            section.episodes.map((story) => {
-                              const active = selectedStoryKey === story.progressKey;
+                        {expanded
+                          ? section.episodes.map((story) => {
+                              const active =
+                                selectedStoryKey === story.progressKey;
                               return (
                                 <Pressable
                                   key={story.progressKey}
@@ -493,66 +395,45 @@ export default function QuickChallengeDetails() {
                                   <Text
                                     style={[
                                       styles.modalItemText,
-                                      story.locked && styles.modalItemTextLocked,
+                                      story.locked &&
+                                        styles.modalItemTextLocked,
                                     ]}
                                   >
                                     {story.title}
                                   </Text>
+                                  <View style={styles.modalMetaRow}>
+                                    <Text style={styles.modalItemMeta}>
+                                      {story.distanceMeters
+                                        ? `${(
+                                            story.distanceMeters / 1000
+                                          ).toFixed(1)} km`
+                                        : "-"}{" "}
+                                      •{" "}
+                                      {story.estimatedTimeMin ??
+                                        story.durationMinutes ??
+                                        "--"}{" "}
+                                      min
+                                    </Text>
+                                    <View style={styles.badgeRow}>
+                                      {story.completed ? (
+                                        <Text style={styles.badgeCompleted}>
+                                          Completed
+                                        </Text>
+                                      ) : null}
+                                      {story.locked ? (
+                                        <Text style={styles.badgeLocked}>
+                                          Locked
+                                        </Text>
+                                      ) : null}
+                                    </View>
+                                  </View>
                                 </Pressable>
                               );
-                            })}
-                        </View>
-                      );
-                    })}
-
-                    {/* Divider */}
-                    <View style={{ height: 1, backgroundColor: "#E5E7EB", marginVertical: 8 }} />
-
-                    {/* STORIES (Audio) + NO AUDIO inside same modal */}
-                    <View style={styles.modalSeason}>
-                      <Text style={styles.modalSectionTitle}>Stories (Audio)</Text>
-
-                      {loading && storiesOptions.length === 0 ? (
-                        <Text style={styles.modalEmpty}>Loading audio stories...</Text>
-                      ) : storiesOptions.length === 0 ? (
-                        <Text style={styles.modalEmpty}>No audio stories found</Text>
-                      ) : (
-                        storiesOptions.map((audio) => (
-                          <Pressable
-                            key={audio.id}
-                            style={styles.modalItem}
-                            onPress={() => {
-                              setSelectedAudio(audio);
-                              setStoryPickerOpen(false);
-                            }}
-                          >
-                            <Text style={styles.modalItemText}>{audio.title}</Text>
-                          </Pressable>
-                        ))
-                      )}
-
-                      {/* No Audio option */}
-                      <Pressable
-                        style={[
-                          styles.modalItem,
-                          { backgroundColor: "#FEE2E2", marginTop: 8 },
-                        ]}
-                        onPress={() => {
-                          setSelectedAudio(null);
-                          setStoryPickerOpen(false);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.modalItemText,
-                            { color: "#991B1B" },
-                          ]}
-                        >
-                          🚫 No Audio
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </>
+                            })
+                          : null}
+                      </View>
+                    );
+                  })
                 )}
               </ScrollView>
             </View>
@@ -563,13 +444,9 @@ export default function QuickChallengeDetails() {
   );
 }
 
-/* -------------------------------
-      Styles
-------------------------------- */
 const styles = StyleSheet.create({
   bg: { flex: 1 },
   safe: { flex: 1 },
-
   header: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6 },
   h1: { fontSize: 32, fontWeight: "900", color: "#000" },
   h2: { fontSize: 16, fontWeight: "700", color: "#000", marginTop: 2 },
@@ -580,21 +457,32 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 16,
     backgroundColor: "#BEE3BF",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   title: { fontSize: 18, fontWeight: "900", color: "#0B3D1F", marginBottom: 8 },
   item: { fontSize: 15, fontWeight: "700", color: "#0B3D1F", marginVertical: 2 },
 
   startBtn: {
-    marginTop: 14,
+    marginTop: 30,
     marginHorizontal: 20,
     backgroundColor: "#22C55E",
     borderRadius: 18,
     paddingVertical: 16,
     alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
   startText: { color: "#fff", fontSize: 18, fontWeight: "900" },
 
-  // Equipped pet
+  // Equipped pet block
   petCard: {
     marginHorizontal: 20,
     marginTop: 12,
@@ -611,7 +499,6 @@ const styles = StyleSheet.create({
   },
   petTitle: { color: "#0B3D1F", fontWeight: "800", fontSize: 12 },
   petName: { color: "#0B3D1F", fontWeight: "900", fontSize: 16, marginTop: 4 },
-
   progressBar: {
     marginTop: 6,
     height: 8,
@@ -622,7 +509,7 @@ const styles = StyleSheet.create({
   progressFill: { height: "100%", backgroundColor: "#10B981" },
   levelText: { marginTop: 6, color: "#0B3D1F", fontWeight: "800" },
 
-  // Story bar
+  // Story bar + modal
   storyBar: {
     marginHorizontal: 20,
     marginTop: 10,
@@ -643,8 +530,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 10,
   },
-
-  // Modals
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",
@@ -657,7 +542,6 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    maxHeight: "60%",
   },
   modalTitle: {
     fontSize: 16,
@@ -666,7 +550,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   modalEmpty: { fontSize: 13, color: "#4B5563", paddingVertical: 10 },
-
   modalSeason: { marginBottom: 20 },
   modalHeaderRow: {
     flexDirection: "row",
@@ -681,7 +564,6 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     marginTop: 2,
   },
-
   modalItem: {
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -691,21 +573,23 @@ const styles = StyleSheet.create({
   modalItemLocked: { opacity: 0.6 },
   modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
   modalItemTextLocked: { color: "#6B7280" },
-
-  modeBtn: {
-    backgroundColor: "#E5F9E7",
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 10,
+  modalMetaRow: { marginTop: 4 },
+  modalItemMeta: { fontSize: 13, color: "#4B5563" },
+  badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
+  badgeCompleted: {
+    fontSize: 12,
+    color: "#065F46",
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
   },
-  modeTitle: { fontSize: 16, fontWeight: "900", color: "#0B3D1F" },
-  modeSubtitle: { fontSize: 13, color: "#374151", marginTop: 2 },
-
-  audioOption: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+  badgeLocked: {
+    fontSize: 12,
+    color: "#92400E",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
   },
-  audioOptionText: { fontSize: 15, fontWeight: "700", color: "#111827" },
 });

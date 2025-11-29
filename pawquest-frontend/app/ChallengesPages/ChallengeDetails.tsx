@@ -1,11 +1,5 @@
 // app/ChallengesPages/ChallengeDetails.tsx
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -20,19 +14,11 @@ import {
   SafeAreaView,
   Platform,
   Modal,
-  TextInput,
-  TouchableOpacity,
   Alert,
 } from "react-native";
-import {
-  Stack,
-  useFocusEffect,
-  useLocalSearchParams,
-  useRouter,
-} from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
 import { auth, db } from "../../src/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import {
@@ -40,48 +26,109 @@ import {
   getChallengeRatingStats,
   getUserChallengeRating,
 } from "../../src/lib/firestoreChallenges";
-import { formalizeStory } from "../../src/lib/services/aiFormalize";
-import { generateVoiceFromElevenLabs } from "../../src/lib/services/ttsEleven";
+import {
+  extractVariantCompletion,
+  isChallengeFullyLocked,
+  VariantCompletionFlags,
+} from "../../src/lib/challengeRuns";
+import { describeSegmentsMeta } from "../../src/lib/stories";
+import {
+  loadStoryPickerData,
+  SeasonSection,
+  StoryOption,
+} from "../../src/lib/storyPicker";
 
 /* ------------------------ category backgrounds ------------------------ */
 const defaultBg = require("../../assets/images/ImageBackground.jpg");
 const bgByCategory: Record<string, any> = {
-  city: require("../../assets/images/Riyadd.jpg"),
-  mountain: require("../../assets/images/ImageBackground.jpg"),
+  city: require("../../assets/images/CityBg.jpg"),
+  mountain: require("../../assets/images/mountainss.jpg"),
   desert: require("../../assets/images/Dune.jpg"),
-  sea: require("../../assets/images/ImageBackground.jpg"),
+  sea: require("../../assets/images/seaa.jpg"),
 };
 
 /* ------------------------ category palettes ------------------------ */
+// Rich, named palette per category to color every element on the page.
+// Keys keep backwards-compat (light/mid/strong/textOnStrong) and add specific roles.
 const PALETTES = {
-  city: {
-    light: "#E8F1FF",
-    mid: "#C7DAFF",
-    strong: "#3B82F6",
+   city: {
+    light: "#EDEEF0",      // subtle concrete gray
+    mid: "#BFC5CE",        // mid gray-blue accent
+    strong: "#4B5563",     // deep slate (headings / buttons)
     textOnStrong: "#FFFFFF",
+
+    easyBg: "#4B5563",
+    hardBg: "#4B5563",
+    tabBorder: "#BFC5CE",
+    rewardCardBg: "#D2D7DD",
+    rewardSquareBg: "#EDEEF0",
+    pointsPillBg: "#EDEEF0",
+    storyBarBg: "#EDEEF0",
+    statsCardBg: "#EDEEF0",
+    divider: "#000000ff",
+    ctaBg: "#4B5563",
+    ctaText: "#FFFFFF",
   },
+
   mountain: {
-    light: "#EAF8F2",
-    mid: "#C9F0E0",
-    strong: "#10B981",
-    textOnStrong: "#0B281C",
-  },
-  desert: {
-    light: "#FFF3E7",
-    mid: "#FAD9BB",
-    strong: "#FB923C",
-    textOnStrong: "#2E1A09",
-  },
-  sea: {
-    light: "#EAF2FF",
-    mid: "#C8D8FF",
-    strong: "#2563EB",
+    light: "#FFECEB",      // gentle rosy fog
+    mid: "#F8B4AB",        // light red-coral midtone
+    strong: "#E11D48",     // bold crimson accent
     textOnStrong: "#FFFFFF",
+
+    easyBg: "#f86459ff",
+    hardBg: "#f86459ff",
+    tabBorder: "#F8B4AB",
+    rewardCardBg: "#F8B4AB",
+    rewardSquareBg: "#FFECEB",
+    pointsPillBg: "#FFECEB",
+    storyBarBg: "#FFECEB",
+    statsCardBg: "#FFECEB",
+    divider: "#663232ff",
+    ctaBg: "#f86459ff",
+    ctaText: "#FFFFFF",
+  },
+
+  desert: {
+    light: "#FFF2E0",      // pale sand
+    mid: "#F6C995",        // golden beige
+    strong: "#D97706",     // warm burnt orange
+    textOnStrong: "#2C1500",
+
+    easyBg: "#D97706",
+    hardBg: "#D97706",
+    tabBorder: "#F6C995",
+    rewardCardBg: "#F6C995",
+    rewardSquareBg: "#FFF2E0",
+    pointsPillBg: "#FFF2E0",
+    storyBarBg: "#FFF2E0",
+    statsCardBg: "#FFF2E0",
+    divider: "#834821ff",
+    ctaBg: "#D97706",
+    ctaText: "#2C1500",
+  },
+
+  sea: {
+    light: "#E6F6FF",      // soft sky aqua
+    mid: "#9EDBFF",        // medium turquoise
+    strong: "#0284C7",     // vivid ocean blue
+    textOnStrong: "#FFFFFF",
+
+    easyBg: "#0284C7",
+    hardBg: "#0284C7",
+    tabBorder: "#9EDBFF",
+    rewardCardBg: "#9EDBFF",
+    rewardSquareBg: "#E6F6FF",
+    pointsPillBg: "#E6F6FF",
+    storyBarBg: "#E6F6FF",
+    statsCardBg: "#E6F6FF",
+    divider: "#3f9af0ff",
+    ctaBg: "#0284C7",
+    ctaText: "#FFFFFF",
   },
 } as const;
 const getPalette = (cat?: string) =>
-  PALETTES[(cat || "city").toLowerCase() as keyof typeof PALETTES] ??
-  PALETTES.city;
+  PALETTES[(cat || "city").toLowerCase() as keyof typeof PALETTES] ?? PALETTES.city;
 
 /* ----------------------------- types ----------------------------- */
 type Variant = {
@@ -90,15 +137,6 @@ type Variant = {
   estimatedTimeMin: number;
   calories: number;
   steps: number;
-  hiitType?: string;
-};
-
-type Story = {
-  id: string;
-  title: string;
-  distanceMeters?: number;
-  estimatedTimeMin?: number;
-  calories?: number;
   hiitType?: string;
 };
 
@@ -117,9 +155,7 @@ type ChallengeDoc = {
 
 /* --------------------------- helpers --------------------------- */
 const mToKm = (m?: number) =>
-  typeof m === "number"
-    ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km`
-    : "—";
+  typeof m === "number" ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : "—";
 
 /* -------------------------- component -------------------------- */
 export default function ChallengeDetails() {
@@ -127,6 +163,13 @@ export default function ChallengeDetails() {
   const router = useRouter();
   const { id, category, title } =
     useLocalSearchParams<{ id?: string; category?: string; title?: string }>();
+  const userId = auth.currentUser?.uid ?? null;
+  const normalizedId = useMemo(() => {
+    if (typeof id === "string") return id;
+    if (Array.isArray(id)) return id[0] ?? null;
+    if (typeof id === "number") return String(id);
+    return null;
+  }, [id]);
 
   const [data, setData] = useState<ChallengeDoc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -134,53 +177,49 @@ export default function ChallengeDetails() {
   const [ratingStats, setRatingStats] = useState<ChallengeStats | null>(null);
   const [userRating, setUserRating] = useState<number | null>(null);
 
-  // ✅ Only these two story options now
-  const [stories, setStories] = useState<Story[]>([]);
+  // stories
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
-  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [storiesLoading, setStoriesLoading] = useState(false);
+  const [petStoryOptions, setPetStoryOptions] = useState<StoryOption[]>([]);
+  const [seasonSections, setSeasonSections] = useState<SeasonSection[]>([]);
+  const [flatStoryOptions, setFlatStoryOptions] = useState<StoryOption[]>([]);
+  const [selectedStoryKey, setSelectedStoryKey] = useState<string | null>(null);
+  const [expandedSeasonId, setExpandedSeasonId] = useState<string | null>(null);
+  const [hasUserChosenStory, setHasUserChosenStory] = useState(false);
+  const [variantCompletions, setVariantCompletions] = useState<VariantCompletionFlags>({
+    easy: false,
+    hard: false,
+  });
+  const [locksReady, setLocksReady] = useState(false);
+  const lockedNavRef = useRef(false);
 
-  // AI audio modal state
-  const [aiModalVisible, setAiModalVisible] = useState(false);
-  const [aiSourceText, setAiSourceText] = useState("");
-  const [aiSummary, setAiSummary] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-
-  // audioUri to pass to map (NOT played here)
-  const [audioUri, setAudioUri] = useState<string | null>(null);
-
-  // animations
   const headerAnim = useRef(new Animated.Value(0)).current;
   const rewardAnim = useRef(new Animated.Value(0)).current;
   const statsAnim = useRef(new Animated.Value(0)).current;
 
-  /* ----------------- fetch challenge + base stories ----------------- */
+  // fetch challenge doc
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        if (!id) return;
-
-        // challenge doc
-        const ref = doc(db, "challenges", String(id));
+        if (!normalizedId) return;
+        const ref = doc(db, "challenges", normalizedId);
         const snap = await getDoc(ref);
         if (snap.exists() && active) {
           const d = snap.data() as ChallengeDoc;
           setData(d);
           if (d.variants?.hard && !d.variants?.easy) setTab("hard");
-        }
-
-        // ✅ Only two options:
-        const baseStories: Story[] = [
-          { id: "none", title: "🚫 No Audio Story" },
-          { id: "ai", title: "🎧 AI Audio Story (paste your text)" },
-        ];
-
-        if (active) {
-          setStories(baseStories);
-          setSelectedStoryId("none");
+        } else if (active) {
+          setData(null);
         }
       } catch (e) {
-        console.error("Failed to load challenge:", e);
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("Failed to load challenge:", e);
+        }
+        if (active) {
+          setData(null);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -188,9 +227,8 @@ export default function ChallengeDetails() {
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [normalizedId]);
 
-  /* ----------------- animations once data is loaded ----------------- */
   useEffect(() => {
     if (loading || !data) return;
     headerAnim.setValue(0);
@@ -218,19 +256,9 @@ export default function ChallengeDetails() {
     ]).start();
   }, [loading, data, headerAnim, rewardAnim, statsAnim]);
 
-  /* ----------------- rating stats on focus ----------------- */
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      const normalizedId =
-        typeof id === "string"
-          ? id
-          : Array.isArray(id)
-          ? id[0]
-          : typeof id === "number"
-          ? String(id)
-          : null;
-
       if (!normalizedId) {
         setRatingStats(null);
         setUserRating(null);
@@ -256,10 +284,8 @@ export default function ChallengeDetails() {
             setRatingStats(null);
           }
           if (__DEV__) {
-            console.warn(
-              "[ChallengeDetails] rating stats fetch failed",
-              error
-            );
+            // eslint-disable-next-line no-console
+            console.warn("[ChallengeDetails] rating stats fetch failed", error);
           }
         }
       })();
@@ -267,23 +293,216 @@ export default function ChallengeDetails() {
       return () => {
         active = false;
       };
-    }, [id])
+    }, [normalizedId]),
   );
 
-  const effectiveCategory = (
-    category || data?.categoryId || "city"
-  ).toString().toLowerCase();
+  useEffect(() => {
+    let active = true;
+
+    if (!normalizedId || !userId) {
+      setVariantCompletions({ easy: false, hard: false });
+      setLocksReady(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    setLocksReady(false);
+    (async () => {
+      try {
+        const runRef = doc(db, "Users", userId, "challengeRuns", normalizedId);
+        const snap = await getDoc(runRef);
+        if (!active) return;
+        if (snap.exists()) {
+          const flags = extractVariantCompletion(snap.data());
+          setVariantCompletions(flags);
+        } else {
+          setVariantCompletions({ easy: false, hard: false });
+        }
+      } catch {
+        if (active) {
+          setVariantCompletions({ easy: false, hard: false });
+        }
+      } finally {
+        if (active) setLocksReady(true);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [normalizedId, userId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!data || !normalizedId) {
+      setPetStoryOptions([]);
+      setSeasonSections([]);
+      setFlatStoryOptions([]);
+      setSelectedStoryKey(null);
+      setStoriesLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setStoriesLoading(true);
+    (async () => {
+      try {
+        const result = await loadStoryPickerData({
+          challengeDoc: data,
+          challengeId: normalizedId,
+          variantId: tab,
+          userId,
+        });
+        if (!active) return;
+        setPetStoryOptions(result.petStoryOptions);
+        setSeasonSections(result.seasonSections);
+        setFlatStoryOptions(result.flatStoryOptions);
+        setSelectedStoryKey((prev) => {
+          if (
+            prev &&
+            result.flatStoryOptions.some((story) => story.progressKey === prev && !story.locked)
+          ) {
+            return prev;
+          }
+          return result.flatStoryOptions.find((story) => !story.locked)?.progressKey ?? null;
+        });
+      } catch (error) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("[ChallengeDetails] failed to load stories", error);
+        }
+        if (active) {
+          setPetStoryOptions([]);
+          setSeasonSections([]);
+          setFlatStoryOptions([]);
+          setSelectedStoryKey(null);
+        }
+      } finally {
+        if (active) setStoriesLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [data, normalizedId, tab, userId]);
+
+  const challengeLocked = useMemo(
+    () => isChallengeFullyLocked(variantCompletions),
+    [variantCompletions],
+  );
+
+  const currentVariantLocked = useMemo(() => {
+    if (challengeLocked) return true;
+    return tab === "hard" ? variantCompletions.hard : variantCompletions.easy;
+  }, [challengeLocked, tab, variantCompletions]);
+
+  const effectiveCategory = (category || data?.categoryId || "city").toString().toLowerCase();
   const pal = getPalette(effectiveCategory);
   const bgSource = bgByCategory[effectiveCategory] ?? defaultBg;
 
-  const variant: Variant | undefined = useMemo(
-    () => data?.variants?.[tab],
-    [data, tab]
-  );
+  const variant: Variant | undefined = useMemo(() => data?.variants?.[tab], [data, tab]);
 
   const selectedStory = useMemo(
-    () => stories.find((s) => s.id === selectedStoryId) || null,
-    [stories, selectedStoryId]
+    () =>
+      flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ??
+      null,
+    [flatStoryOptions, selectedStoryKey],
+  );
+
+  const storySelectionRequired = flatStoryOptions.length > 0;
+
+  const storyBarText = useMemo(() => {
+    if (storiesLoading) return "Loading stories...";
+    if (!flatStoryOptions.length) return "No stories available yet";
+    if (hasUserChosenStory && selectedStory) return `Story: ${selectedStory.title}`;
+    return "Choose a Story";
+  }, [flatStoryOptions.length, hasUserChosenStory, selectedStory, storiesLoading]);
+
+  const storySegmentDescription = useMemo(
+    () => describeSegmentsMeta(selectedStory),
+    [selectedStory],
+  );
+
+  const startDisabled =
+    !locksReady || currentVariantLocked || (storySelectionRequired && !selectedStory);
+  const startLabel = !locksReady
+    ? "Loading…"
+    : challengeLocked || currentVariantLocked
+    ? "Completed"
+    : "Start Challenge";
+
+  useEffect(() => {
+    if (!locksReady || !challengeLocked || lockedNavRef.current) return;
+    lockedNavRef.current = true;
+    Alert.alert("Challenge locked", "You've already completed both difficulties.", [
+      {
+        text: "OK",
+        onPress: () => {
+          if (router.canGoBack()) router.back();
+          else router.replace("/(tabs)/challenges");
+        },
+      },
+    ]);
+  }, [locksReady, challengeLocked, router]);
+
+  const handleSelectStory = useCallback(
+    (story: StoryOption) => {
+      if (story.locked) {
+        Alert.alert("Locked episode", "Finish the previous episode to unlock this story.");
+        return;
+      }
+      setHasUserChosenStory(true);
+      setSelectedStoryKey(story.progressKey);
+      setStoryPickerOpen(false);
+    },
+    [],
+  );
+
+  const renderStoryOption = useCallback(
+    (story: StoryOption) => {
+      const active = selectedStoryKey === story.progressKey;
+      const distanceLabel = story.distanceMeters ? mToKm(story.distanceMeters) : "—";
+      const timeValue =
+        typeof story.durationMinutes === "number"
+          ? story.durationMinutes
+          : story.estimatedTimeMin;
+      const timeLabel = typeof timeValue === "number" ? `${timeValue} min` : "--";
+      return (
+        <Pressable
+          key={story.progressKey}
+          style={[
+            styles.modalItem,
+            active && styles.modalItemActive,
+            story.locked && styles.modalItemLocked,
+          ]}
+          onPress={() => handleSelectStory(story)}
+        >
+          <View style={styles.storyRowHeader}>
+            <Text
+              style={[
+                styles.modalItemText,
+                active && { color: pal.strong },
+                story.locked && styles.modalItemTextLocked,
+              ]}
+              numberOfLines={1}
+            >
+              {story.title}
+            </Text>
+          </View>
+          <Text style={styles.modalItemMeta}>
+            {distanceLabel} • {timeLabel}
+          </Text>
+          <View style={styles.modalBadgeRow}>
+            {story.completed ? <Text style={styles.completedBadge}>Completed</Text> : null}
+            {story.locked ? <Text style={styles.lockedBadge}>Locked</Text> : null}
+          </View>
+        </Pressable>
+      );
+    },
+    [handleSelectStory, pal, selectedStoryKey],
   );
 
   const headerTranslateY = useMemo(
@@ -292,7 +511,7 @@ export default function ChallengeDetails() {
         inputRange: [0, 1],
         outputRange: [-18, 0],
       }),
-    [headerAnim]
+    [headerAnim],
   );
 
   const rewardScale = useMemo(
@@ -301,7 +520,7 @@ export default function ChallengeDetails() {
         inputRange: [0, 1],
         outputRange: [0.92, 1],
       }),
-    [rewardAnim]
+    [rewardAnim],
   );
 
   const statsTranslateY = useMemo(
@@ -310,11 +529,25 @@ export default function ChallengeDetails() {
         inputRange: [0, 1],
         outputRange: [24, 0],
       }),
-    [statsAnim]
+    [statsAnim],
   );
 
   const rewardImage = useMemo(() => {
     if (!data) return null;
+    // Prefer variant-specific pet images
+    const v: any = data?.variants?.[tab] ?? {};
+    const vPet: any = v?.pet ?? {};
+    const vImages: string[] | null = Array.isArray(v?.petImages)
+      ? v.petImages
+      : Array.isArray(vPet?.images)
+      ? vPet.images
+      : null;
+    const fromVariantArray = vImages && vImages.length > 0 && typeof vImages[0] === 'string' ? vImages[0] : null;
+    const fromVariantSingle =
+      typeof v?.petImageUrl === 'string' ? v.petImageUrl : typeof vPet?.imageUrl === 'string' ? vPet.imageUrl : null;
+    if (fromVariantArray) return fromVariantArray;
+    if (fromVariantSingle) return fromVariantSingle;
+    // Fallbacks
     if (typeof data.petImageUrl === "string" && data.petImageUrl.length > 0) {
       return data.petImageUrl;
     }
@@ -322,13 +555,10 @@ export default function ChallengeDetails() {
       return data.imageUrl;
     }
     return null;
-  }, [data]);
+  }, [data, tab]);
 
   const rewardPoints = useMemo(() => {
-    if (
-      typeof data?.rewardPoints === "number" &&
-      Number.isFinite(data.rewardPoints)
-    ) {
+    if (typeof data?.rewardPoints === "number" && Number.isFinite(data.rewardPoints)) {
       return data.rewardPoints;
     }
     if (typeof variant?.xp === "number" && Number.isFinite(variant.xp)) {
@@ -341,108 +571,46 @@ export default function ChallengeDetails() {
   const statDistance = selectedStory?.distanceMeters ?? variant?.distanceMeters;
   const statCalories = selectedStory?.calories ?? variant?.calories;
   const statTime = selectedStory?.estimatedTimeMin ?? variant?.estimatedTimeMin;
-  const statHiit = selectedStory?.hiitType ?? variant?.hiitType;
-
-  /* ---------------------- AI modal handlers ---------------------- */
-
-  const handleOpenAiModal = () => {
-    if (selectedStoryId === "ai") {
-      setAiModalVisible(true);
-    } else {
-      Alert.alert("AI audio not selected", "Pick 'AI Audio Story' first.");
-    }
-  };
-
-  const handleSummarize = async () => {
-    if (!aiSourceText.trim()) {
-      Alert.alert("Add text first", "Paste or type your story or page.");
-      return;
-    }
-    setAiLoading(true);
-    try {
-      const approxMinutes = statTime ?? 30;
-      const prompt = `
-You are writing a motivational running audio story.
-
-User provided text:
-${aiSourceText}
-
-Task:
-- Summarize / adapt this content into an engaging, energetic story
-- Target duration when spoken: about ${approxMinutes} minutes
-- Insert short motivational lines throughout
-- Return only the story text, no explanations.
-      `.trim();
-
-      const result = await formalizeStory(prompt);
-      const bytes = new TextEncoder().encode(result).length;
-      if (bytes > 1_000_000) {
-        setAiSummary(
-          "⚠️ AI story is too long (over 1MB). Try shorter input or reduce text."
-        );
-      } else {
-        setAiSummary(result);
-      }
-    } catch (err) {
-      console.error("❌ Gemini summarize error:", err);
-      Alert.alert("AI Error", "Failed to summarize story.");
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const handleGenerateAudio = async () => {
-    const text = aiSummary.trim() || aiSourceText.trim();
-    if (!text) {
-      Alert.alert(
-        "No story text",
-        "Summarize first or provide text for audio."
-      );
-      return;
-    }
-
-    setAiLoading(true);
-    try {
-      console.log("🎧 Sending text to ElevenLabs...");
-      // 👉 Only generate URI, don't play here
-      const uri = await generateVoiceFromElevenLabs(text);
-      setAudioUri(uri);
-      Alert.alert(
-        "Audio Ready",
-        "ElevenLabs audio is generated and will be available in the challenge screen."
-      );
-    } catch (err) {
-      console.error("🎧 ElevenLabs audio error:", err);
-      Alert.alert(
-        "Audio Error",
-        String(err instanceof Error ? err.message : err)
-      );
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  /* ---------------------- start challenge ---------------------- */
 
   const handleStart = () => {
-    if (!id) {
-      Alert.alert("Missing challenge id");
+    if (!normalizedId) {
+      Alert.alert("Missing challenge", "We couldn't load this challenge. Please try again.");
       return;
     }
-
-    // If AI story selected, ensure we have an audioUri
-    const finalAudioUri =
-      selectedStoryId === "ai" && audioUri ? audioUri : "";
-
+    if (!locksReady) {
+      Alert.alert("Please wait", "Checking your challenge status…");
+      return;
+    }
+    if (challengeLocked) {
+      Alert.alert("Challenge locked", "You've already completed both easy and hard modes.");
+      return;
+    }
+    if (currentVariantLocked) {
+      const label = tab === "easy" ? "Easy" : "Hard";
+      Alert.alert("Difficulty locked", `You've already completed the ${label} mode.`);
+      return;
+    }
+    if (storySelectionRequired && !selectedStory) {
+      Alert.alert("Choose a Story", "Select an unlocked story before starting.");
+      return;
+    }
+    const storyParams = selectedStory
+      ? {
+          storyType: selectedStory.type,
+          storySeasonId: selectedStory.seasonId ?? undefined,
+          storyEpisodeId: selectedStory.episodeId ?? undefined,
+          storyPetKey: selectedStory.petKey ?? undefined,
+          storyId: selectedStory.id ?? selectedStory.progressKey,
+        }
+      : {};
     router.push({
       pathname: "/ChallengesPages/map",
       params: {
-        challengeId: String(id),
+        challengeId: normalizedId,
         title: data?.title || title || "Challenge",
         category: effectiveCategory,
         difficulty: tab,
-        storyId: selectedStory?.id ?? "",
-        audioUri: finalAudioUri,
+        ...storyParams,
       },
     });
   };
@@ -482,33 +650,24 @@ Task:
 
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 140 + insets.bottom }}
+          contentContainerStyle={{ paddingBottom: 140 + insets.bottom }} // leave room for fixed footer CTA
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
           <Animated.View
             style={[
               styles.header,
-              {
-                opacity: headerAnim,
-                transform: [{ translateY: headerTranslateY }],
-              },
+              { opacity: headerAnim, transform: [{ translateY: headerTranslateY }] },
             ]}
           >
             <Pressable
               onPress={() => router.back()}
-              style={[
-                styles.backBtn,
-                { backgroundColor: "rgba(255,255,255,0.9)" },
-              ]}
+              style={[styles.backBtn, { backgroundColor: "rgba(255,255,255,0.9)" }]}
             >
               <Ionicons name="chevron-back" size={22} color="#0B3D1F" />
             </Pressable>
             <View style={{ flex: 1 }}>
-              <Text
-                style={[styles.titleTop, { color: pal.textOnStrong }]}
-                numberOfLines={1}
-              >
+              <Text style={[styles.titleTop, { color: pal.textOnStrong }]} numberOfLines={1}>
                 {data.title || title || "Challenge"}
               </Text>
               <Text style={[styles.subtitle, { color: pal.textOnStrong }]}>
@@ -517,7 +676,7 @@ Task:
             </View>
           </Animated.View>
 
-          {/* Tabs (easy/hard) */}
+          {/* Tabs */}
           <View style={styles.tabs}>
             {(["easy", "hard"] as const).map((t) => {
               const enabled = Boolean(data.variants?.[t]);
@@ -530,18 +689,13 @@ Task:
                   style={[
                     styles.tabBtn,
                     {
-                      backgroundColor: active ? pal.strong : pal.light,
-                      borderColor: pal.mid,
+                      backgroundColor: active ? (t === "easy" ? pal.easyBg : pal.hardBg) : pal.light,
+                      borderColor: pal.tabBorder,
                     },
                     !enabled && { opacity: 0.45 },
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.tabText,
-                      { color: active ? pal.textOnStrong : "#1F2937" },
-                    ]}
-                  >
+                  <Text style={[styles.tabText, { color: active ? pal.textOnStrong : "#1F2937" }]}>
                     {t[0].toUpperCase() + t.slice(1)}
                   </Text>
                 </Pressable>
@@ -549,265 +703,189 @@ Task:
             })}
           </View>
 
-          {/* Rewards Card */}
+          {/* (Smartwatch banner removed by request) */}
+
+          {/* BIG Rewards Card (square-ish feature) */}
           <Animated.View
             style={[
               styles.rewardCard,
               {
-                borderColor: pal.mid,
-                backgroundColor: "rgba(255,255,255,0.96)",
+                borderColor: pal.tabBorder,
+                backgroundColor: pal.rewardCardBg,
                 opacity: rewardAnim,
                 transform: [{ scale: rewardScale }],
               },
             ]}
           >
             <Text style={styles.rewardLabel}>Rewards</Text>
-            <View style={styles.rewardSquare}>
+            <View style={[styles.rewardSquare, { backgroundColor: pal.rewardSquareBg }]}>
               {rewardImage ? (
-                <Image
-                  source={{ uri: rewardImage }}
-                  style={styles.rewardImage}
-                  resizeMode="contain"
-                />
+                <Image source={{ uri: rewardImage }} style={styles.rewardImage} resizeMode="contain" />
               ) : (
-                <MaterialCommunityIcons
-                  name="bird"
-                  size={72}
-                  color="#0B3D1F"
-                />
+                <MaterialCommunityIcons name="bird" size={72} color="#0B3D1F" />
               )}
             </View>
-            <Text style={styles.rewardPetName}>
-              {data.rewardPet ?? "-"}
-            </Text>
-            <View
-              style={[
-                styles.pointsPill,
-                { backgroundColor: pal.light, borderColor: pal.mid },
-              ]}
-            >
+            <Text style={styles.rewardPetName}>{(() => {
+              const v: any = data?.variants?.[tab] ?? {};
+              const vPet: any = v?.pet ?? {};
+              const vn = typeof v?.rewardPet === 'string' ? v.rewardPet : (typeof vPet?.name === 'string' ? vPet.name : (typeof vPet?.id === 'string' ? vPet.id : undefined));
+              return vn ?? (data?.rewardPet ?? "-");
+            })()}</Text>
+            <View style={[styles.pointsPill, { backgroundColor: pal.pointsPillBg, borderColor: pal.tabBorder }]}>
               <Text style={styles.pointsText}>
-                {rewardPoints !== null
-                  ? `${Math.round(rewardPoints).toLocaleString()} points`
-                  : "Reward awaits!"}
+                {rewardPoints !== null ? `${Math.round(rewardPoints).toLocaleString()} points` : "Reward awaits!"}
               </Text>
             </View>
           </Animated.View>
 
-          {/* Story choice bar */}
+          {/* Choose Story — its own bar */}
           <Pressable
             onPress={() => setStoryPickerOpen(true)}
             style={[
               styles.storyBar,
-              { backgroundColor: pal.light, borderColor: pal.mid },
+              { backgroundColor: pal.storyBarBg, borderColor: pal.tabBorder },
             ]}
           >
             <Text style={styles.storyBarText} numberOfLines={1}>
-              {selectedStoryId === "none"
-                ? "Story: No audio"
-                : selectedStoryId === "ai"
-                ? "Story: AI Audio Story (tap to configure)"
-                : selectedStory?.title
-                ? `Story: ${selectedStory.title}`
-                : "Choose a Story"}
+              {storyBarText}
             </Text>
             <Ionicons name="chevron-down" size={18} color="#0B3D1F" />
           </Pressable>
 
-          {/* Small button to open AI modal when AI story selected */}
-          {selectedStoryId === "ai" && (
-            <View style={{ paddingHorizontal: 12, marginTop: 8 }}>
-              <TouchableOpacity
-                style={styles.aiConfigBtn}
-                onPress={handleOpenAiModal}
-              >
-                <Text style={styles.aiConfigText}>
-                  ✨ Configure AI Story & Audio
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Stats / info card */}
+          {/* Stats/info card */}
           <Animated.View
             style={[
               styles.statsCard,
               {
-                borderColor: pal.mid,
-                backgroundColor: "rgba(255,255,255,0.96)",
+                borderColor: pal.tabBorder,
+                backgroundColor: pal.statsCardBg,
                 opacity: statsAnim,
                 transform: [{ translateY: statsTranslateY }],
               },
             ]}
           >
-            <View style={styles.statsRow}>
-              <Text style={styles.statItem}>👣 {mToKm(statDistance)}</Text>
-              <Text style={styles.statItem}>🔥 {statCalories ?? "—"} cal</Text>
-              <Text style={styles.statItem}>
-                <Ionicons name="time-outline" size={14} />{" "}
-                {statTime ?? "—"} min
+             <View style={styles.statsRow}>
+              <Text style={[styles.statItem, styles.statsLeft]}>👣 {mToKm(statDistance)}</Text>
+              <Text style={[styles.statItem, styles.statsCenter]}>🔥 {statCalories ?? "--"} cal</Text>
+              <Text style={[styles.statItem, styles.statsRight]}>
+                <Ionicons name="time-outline" size={16} /> {statTime ?? "--"} min
               </Text>
-              <Text style={styles.statItem}>HIIT: {statHiit ?? "—"}</Text>
             </View>
 
-            <View style={[styles.divider, { backgroundColor: pal.mid }]} />
+            <View style={[styles.divider, { backgroundColor: pal.divider }]} />
 
             <View style={styles.metaRow}>
-              <Text style={styles.smallDim}>
-                {(data.stats?.storyPlays ?? 0).toLocaleString()} story plays
+              <Text style={[styles.smallDim, styles.metaCell, styles.metaLeft]}>
+                {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge plays
               </Text>
-              <Text style={styles.smallDim}>
-                {(data.stats?.challengePlays ?? 0).toLocaleString()} challenge
-                plays
-              </Text>
-              {ratingStats && ratingStats.ratingCount > 0 ? (
-                <Text style={styles.smallDim}>
-                  ★ {ratingStats.ratingAvg.toFixed(1)} (
-                  {ratingStats.ratingCount})
-                </Text>
-              ) : null}
-              {userRating ? (
-                <Text style={[styles.smallDim, styles.smallDimOwn]}>
-                  your rating: {userRating}★
-                </Text>
-              ) : null}
+              <View style={[styles.metaCell, styles.metaCenter]}>
+                {ratingStats && ratingStats.ratingCount > 0 ? (
+                  <View style={styles.ratingInline}>
+                    <Ionicons name="star" size={15} color="#F59E0B" />
+                    <Text style={styles.smallDim}>
+                      {ratingStats.ratingAvg.toFixed(1)} ({ratingStats.ratingCount})
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <View style={[styles.metaCell, styles.metaRight]}>
+                {userRating ? (
+                  <View style={styles.ratingInline}>
+                    <Text style={[styles.smallDim, styles.smallDimOwn]}>
+                      your rating: {userRating}
+                    </Text>
+                    <Ionicons name="star" size={15} color="#F59E0B" />
+                  </View>
+                ) : null}
+              </View>
             </View>
+
+            {selectedStory ? (
+              <>
+                <View style={[styles.divider, { backgroundColor: pal.divider }]} />
+                <View style={styles.storySegmentRow}>
+                  <Text style={styles.storySegmentLabel}>Story Segments</Text>
+                  <Text style={styles.storySegmentValue}>{storySegmentDescription}</Text>
+                </View>
+              </>
+            ) : null}
           </Animated.View>
+
+          {/* (Connectivity row removed by request) */}
         </ScrollView>
 
         {/* Fixed footer CTA */}
         <View style={[styles.footer, { paddingBottom: 12 + insets.bottom }]}>
-          <Pressable style={styles.cta} onPress={handleStart}>
-            <Text style={styles.ctaText}>Start Challenge</Text>
+          <Pressable
+            style={[
+              styles.cta,
+              { backgroundColor: pal.ctaBg, borderColor: pal.tabBorder },
+              startDisabled && styles.ctaDisabled,
+            ]}
+            onPress={handleStart}
+            disabled={startDisabled}
+          >
+            <Text style={[styles.ctaText, { color: pal.ctaText }]}>{startLabel}</Text>
           </Pressable>
         </View>
 
-        {/* Story Picker Bottom Sheet */}
+        {/* Story Picker */}
         <Modal
           visible={storyPickerOpen}
           transparent
           animationType="fade"
           onRequestClose={() => setStoryPickerOpen(false)}
         >
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setStoryPickerOpen(false)}
-          >
+          <Pressable style={styles.modalBackdrop} onPress={() => setStoryPickerOpen(false)}>
             <View style={styles.modalSheet}>
               <Text style={styles.modalTitle}>Choose a Story</Text>
-              <ScrollView style={{ maxHeight: 320 }}>
-                {stories.length === 0 ? (
-                  <Text style={styles.modalEmpty}>No stories found</Text>
-                ) : (
-                  stories.map((s) => {
-                    const active = s.id === selectedStoryId;
-                    return (
-                      <Pressable
-                        key={s.id}
-                        style={[
-                          styles.modalItem,
-                          active && styles.modalItemActive,
-                        ]}
-                        onPress={() => {
-                          setSelectedStoryId(s.id);
-                          setStoryPickerOpen(false);
-                          if (s.id === "ai") {
-                            setAiModalVisible(true);
-                          }
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.modalItemText,
-                            active && { color: pal.strong },
-                          ]}
-                        >
-                          {s.title}
-                        </Text>
-                        <Text style={styles.modalItemMeta}>
-                          {mToKm(s.distanceMeters)} ·{" "}
-                          {s.estimatedTimeMin ?? "—"} min
-                        </Text>
-                      </Pressable>
-                    );
-                  })
-                )}
+              <ScrollView style={{ maxHeight: 360 }}>
+                {storiesLoading ? (
+                  <ActivityIndicator style={{ paddingVertical: 32 }} />
+                ) : (
+                  <>
+                    {petStoryOptions.length ? (
+                      <View style={styles.modalSeason}>
+                        <Text style={styles.modalSectionTitle}>Pet Story</Text>
+                        {petStoryOptions.map(renderStoryOption)}
+                      </View>
+                    ) : null}
+
+                    {seasonSections.map((section) => {
+                      const expanded = expandedSeasonId === section.seasonId;
+                      return (
+                        <View key={section.seasonId} style={styles.modalSeason}>
+                          <Pressable
+                            onPress={() =>
+                              setExpandedSeasonId(expanded ? null : section.seasonId)
+                            }
+                          >
+                            <View style={styles.storyRowHeader}>
+                              <Text style={styles.modalSectionTitle}>{section.title}</Text>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                {section.episodes.every((episode) => episode.completed) ? (
+                                  <Text style={styles.completedBadge}>Completed</Text>
+                                ) : null}
+                                <Ionicons
+                                  name={expanded ? "chevron-up" : "chevron-down"}
+                                  size={16}
+                                  color="#111827"
+                                />
+                              </View>
+                            </View>
+                          </Pressable>
+
+                          {expanded ? section.episodes.map(renderStoryOption) : null}
+                        </View>
+                      );
+                    })}
+
+                    {!petStoryOptions.length && !seasonSections.length ? (
+                      <Text style={styles.modalEmpty}>No stories found</Text>
+                    ) : null}
+                  </>
+                )}
               </ScrollView>
-            </View>
-          </Pressable>
-        </Modal>
-
-        {/* AI Audio Bottom Sheet */}
-        <Modal
-          visible={aiModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setAiModalVisible(false)}
-        >
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setAiModalVisible(false)}
-          >
-            <View style={styles.aiSheet}>
-              <Text style={styles.modalTitle}>AI Audio Story</Text>
-              <Text style={styles.aiHint}>
-                Paste your text or page below. We’ll summarize it to roughly{" "}
-                {statTime ?? 30} minutes, then generate audio once with
-                ElevenLabs. The audio will be available when you start the
-                challenge.
-              </Text>
-
-              <TextInput
-                style={styles.aiInput}
-                placeholder="Paste your text here..."
-                placeholderTextColor="#6A6A6A"
-                multiline
-                value={aiSourceText}
-                onChangeText={setAiSourceText}
-              />
-
-              <TouchableOpacity
-                style={[
-                  styles.aiBtn,
-                  { backgroundColor: "#111", marginTop: 10 },
-                ]}
-                onPress={handleSummarize}
-                disabled={aiLoading}
-                activeOpacity={0.8}
-              >
-                {aiLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.aiBtnText}>✨ Summarize with AI</Text>
-                )}
-              </TouchableOpacity>
-
-              {aiSummary ? (
-                <View style={styles.aiSummaryBox}>
-                  <Text style={styles.aiSummaryTitle}>AI Story Preview</Text>
-                  <ScrollView style={{ maxHeight: 160 }}>
-                    <Text style={styles.aiSummaryText}>{aiSummary}</Text>
-                  </ScrollView>
-                </View>
-              ) : null}
-
-              <TouchableOpacity
-                style={[
-                  styles.aiBtn,
-                  { backgroundColor: "#294125", marginTop: 10 },
-                ]}
-                onPress={handleGenerateAudio}
-                disabled={aiLoading}
-                activeOpacity={0.8}
-              >
-                {aiLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.aiBtnText}>
-                    🎧 Generate Voice (ElevenLabs)
-                  </Text>
-                )}
-              </TouchableOpacity>
             </View>
           </Pressable>
         </Modal>
@@ -843,12 +921,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 12, fontWeight: "800", opacity: 0.9 },
 
   tabs: { flexDirection: "row", gap: 12, paddingHorizontal: 12, marginTop: 8 },
-  tabBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 9999,
-    borderWidth: 1,
-  },
+  tabBtn: { paddingVertical: 10, paddingHorizontal: 18, borderRadius: 9999, borderWidth: 1 },
   tabText: { fontSize: 15, fontWeight: "900" },
 
   /* Big rewards feature card */
@@ -860,12 +933,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
   },
-  rewardLabel: {
-    fontSize: 12,
-    color: "#374151",
-    fontWeight: "800",
-    marginBottom: 6,
-  },
+  rewardLabel: { fontSize: 12, color: "#374151", fontWeight: "800", marginBottom: 6 },
   rewardSquare: {
     width: 160,
     height: 160,
@@ -876,12 +944,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   rewardImage: { width: "100%", height: "100%" },
-  rewardPetName: {
-    marginTop: 10,
-    fontSize: 22,
-    fontWeight: "900",
-    color: "#0B3D1F",
-  },
+  rewardPetName: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#000000ff" },
   pointsPill: {
     marginTop: 8,
     paddingHorizontal: 14,
@@ -889,7 +952,7 @@ const styles = StyleSheet.create({
     borderRadius: 9999,
     borderWidth: 1,
   },
-  pointsText: { fontSize: 14, fontWeight: "900", color: "#0B3D1F" },
+  pointsText: { fontSize: 14, fontWeight: "900", color: "#000000ff" },
 
   /* Standalone story bar */
   storyBar: {
@@ -903,21 +966,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  storyBarText: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#0B3D1F",
-    flex: 1,
-    marginRight: 10,
-  },
-
-  aiConfigBtn: {
-    backgroundColor: "rgba(11,61,31,0.9)",
-    paddingVertical: 10,
-    borderRadius: 999,
-    alignItems: "center",
-  },
-  aiConfigText: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  storyBarText: { fontSize: 16, fontWeight: "900", color: "#000000ff", flex: 1, marginRight: 10 },
 
   /* Info card */
   statsCard: {
@@ -927,17 +976,20 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
   },
-  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
-  statItem: { fontSize: 14, color: "#111827" },
+  statsRow: { flexDirection: "row", alignItems: "center", gap: 16, justifyContent: "space-between" },
+  statItem: { fontSize: 14, color: "#000000ff", flex: 1 },
+  statsLeft: { textAlign: "left" },
+  statsCenter: { textAlign: "center" },
+  statsRight: { textAlign: "right" },
   divider: { height: 1, marginVertical: 12, opacity: 0.6 },
-  metaRow: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
-  smallDim: { fontSize: 12, color: "#4B5563" },
-  smallDimOwn: {
-    fontSize: 12,
-    color: "#4B5563",
-    opacity: 0.8,
-    fontStyle: "italic",
-  },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  metaCell: { flex: 1 },
+  metaLeft: { textAlign: "left" },
+  metaCenter: { alignItems: "center", justifyContent: "center" },
+  metaRight: { alignItems: "flex-end" },
+  ratingInline: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+  smallDim: { fontSize: 12, color: "#252525ff" },
+  smallDimOwn: { fontSize: 12, color: "#252525ff", opacity: 0.8, fontStyle: "italic" },
 
   /* fixed footer CTA */
   footer: {
@@ -957,6 +1009,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.12)",
   },
   ctaText: { fontSize: 16, fontWeight: "900", color: "#0b3d1f" },
+  ctaDisabled: { opacity: 0.6 },
 
   // Picker modal
   modalBackdrop: {
@@ -972,12 +1025,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#0B3D1F",
-    marginBottom: 10,
-  },
+  modalTitle: { fontSize: 16, fontWeight: "900", color: "#000000ff", marginBottom: 10 },
   modalEmpty: { fontSize: 13, color: "#4B5563", paddingVertical: 10 },
   modalItem: {
     paddingVertical: 12,
@@ -985,59 +1033,39 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   modalItemActive: { backgroundColor: "#EFF6FF" },
-  modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
+  modalItemLocked: { opacity: 0.6 },
+  modalItemText: { fontSize: 15, fontWeight: "800", color: "#000000ff" },
+  modalItemTextLocked: { color: "#6B7280" },
   modalItemMeta: { fontSize: 12, color: "#4B5563", marginTop: 2 },
-
-  /* AI sheet bottom modal */
-  aiSheet: {
-    backgroundColor: "white",
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 20,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-  },
-  aiHint: {
+  modalBadgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
+  modalSeason: { marginBottom: 20 },
+  modalSectionTitle: { fontSize: 18, fontWeight: "900", color: "#111827", marginBottom: 8 },
+  storyRowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  completedBadge: {
     fontSize: 12,
-    color: "#4B5563",
-    marginBottom: 8,
-  },
-  aiInput: {
-    minHeight: 100,
-    maxHeight: 160,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    backgroundColor: "#F9FAFB",
-    textAlignVertical: "top",
-  },
-  aiBtn: {
+    color: "#065F46",
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderRadius: 999,
+  },
+  lockedBadge: {
+    fontSize: 12,
+    color: "#92400E",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  storySegmentRow: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 11,
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 8,
   },
-  aiBtnText: { color: "#fff", fontWeight: "800", fontSize: 14 },
-  aiSummaryBox: {
-    marginTop: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#F9FAFB",
-    padding: 10,
-  },
-  aiSummaryTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    marginBottom: 4,
-    color: "#111827",
-  },
-  aiSummaryText: {
-    fontSize: 13,
-    color: "#111827",
-  },
+  storySegmentLabel: { fontSize: 13, fontWeight: "800", color: "#0B3D1F" },
+  storySegmentValue: { fontSize: 13, color: "#1F2937", flex: 1, textAlign: "right" },
 });
 
 const safeAreaStyle = {
