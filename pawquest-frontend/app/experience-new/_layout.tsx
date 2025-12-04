@@ -6,7 +6,7 @@ import React from 'react';
 export default function ExperienceNewTabs() {
   return (
     <Tabs
-      initialRouteName="story"
+      initialRouteName="challenge"
       screenOptions={{
         // ❌ Hide Expo Router's built-in header completely
         headerShown: false,
@@ -31,19 +31,7 @@ export default function ExperienceNewTabs() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="story"
-        options={{
-          title: 'Story',
-          tabBarIcon: ({ color }) => (
-            <MaterialCommunityIcons
-              name="book-open-page-variant"
-              size={22}
-              color={color}
-            />
-          ),
-        }}
-      />
+      
     </Tabs>
   );
 }
