@@ -121,7 +121,7 @@ const readVariant = (doc: ChallengeDoc, key: string | undefined): VariantDoc | n
   if (!key) return null;
   const fromVariants = doc.variants?.[key];
   if (fromVariants && typeof fromVariants === "object") return fromVariants;
-  const topLevel = doc[key];
+  const topLevel = (doc as any)[key];
   if (topLevel && typeof topLevel === "object") return topLevel as VariantDoc;
   return null;
 };
@@ -173,6 +173,8 @@ export default function MapScreen() {
     storySeasonId,
     storyEpisodeId,
     storyPetKey,
+    audioUrl: audioUrlParam,
+    storyTitle,
   } = useLocalSearchParams<{
     challengeId?: string | string[];
     difficulty?: string | string[];
@@ -180,7 +182,10 @@ export default function MapScreen() {
     storySeasonId?: string | string[];
     storyEpisodeId?: string | string[];
     storyPetKey?: string | string[];
+    audioUrl?: string | string[];
+    storyTitle?: string | string[];
   }>();
+
   const challengeId = Array.isArray(challengeIdParam) ? challengeIdParam[0] ?? null : challengeIdParam ?? null;
   const difficultyValue = Array.isArray(difficulty) ? difficulty[0] : difficulty;
   const variantParam =
@@ -194,6 +199,8 @@ export default function MapScreen() {
   const storySeasonValue = normalizeParam(storySeasonId);
   const storyEpisodeValue = normalizeParam(storyEpisodeId);
   const storyPetValue = normalizeParam(storyPetKey);
+  const audioUrlParamValue = normalizeParam(audioUrlParam);
+  const storyTitleValue = normalizeParam(storyTitle);
   const storyTypeSelection =
     storyTypeValue === "season" || storyTypeValue === "pet" ? storyTypeValue : null;
   const userId = auth.currentUser?.uid ?? null;
@@ -203,7 +210,7 @@ export default function MapScreen() {
   const [challengeDoc, setChallengeDoc] = useState<ChallengeDoc | null>(null);
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [endPoint, setEndPoint] = useState<LatLng | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
+  const [audioUrl, setAudioUrl] = useState<string | undefined>(audioUrlParamValue ?? undefined);
   const [variantCompletions, setVariantCompletions] = useState<VariantCompletionFlags>({
     easy: false,
     hard: false,
@@ -260,7 +267,7 @@ export default function MapScreen() {
         duration: 1500,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
-      })
+      }),
     ).start();
   }, [pulse]);
   const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.6] });
@@ -294,7 +301,10 @@ export default function MapScreen() {
       for (const url of activeStory.segmentUrls) {
         if (cancelled) break;
         try {
-          const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: false, volume: 1 });
+          const { sound } = await Audio.Sound.createAsync(
+            { uri: url },
+            { shouldPlay: false, volume: 1 },
+          );
           sounds.push(sound);
         } catch (error) {
           console.warn("[MapScreen] failed to preload story segment", error);
@@ -519,10 +529,18 @@ export default function MapScreen() {
 
         if (isMounted) {
           setChallengeTitle(data.title);
-          setAudioUrl(data.audioUrl);
+          // لا نغطي audioUrl القادم من ChallengeDetails (AI Story / AI Summary)
+          if (!audioUrlParamValue && data.audioUrl) {
+            setAudioUrl(data.audioUrl);
+          }
+
           // Choose pet image from the selected variant (easy or hard), fallback to easy
           try {
-            const sel: any = preferredVariant ?? readVariant(data, variantParam ?? undefined) ?? easyVariant ?? hardVariant;
+            const sel: any =
+              preferredVariant ??
+              readVariant(data, variantParam ?? undefined) ??
+              easyVariant ??
+              hardVariant;
             const petObj: any = sel?.pet ?? {};
             const imgs: string[] | null = Array.isArray(sel?.petImages)
               ? sel.petImages
@@ -530,12 +548,13 @@ export default function MapScreen() {
               ? petObj.images
               : null;
             const single: string | null =
-              typeof sel?.petImageUrl === 'string'
+              typeof sel?.petImageUrl === "string"
                 ? sel.petImageUrl
-                : typeof petObj?.imageUrl === 'string'
+                : typeof petObj?.imageUrl === "string"
                 ? petObj.imageUrl
                 : null;
-            const chosen = imgs && imgs.length > 0 && typeof imgs[0] === 'string' ? imgs[0] : single;
+            const chosen =
+              imgs && imgs.length > 0 && typeof imgs[0] === "string" ? imgs[0] : single;
             setVariantImageUrl(chosen ?? null);
           } catch {
             setVariantImageUrl(null);
@@ -548,13 +567,12 @@ export default function MapScreen() {
     return () => {
       isMounted = false;
     };
-  }, [challengeId, variantParam]);
+  }, [challengeId, variantParam, audioUrlParamValue]);
 
   // 2) Start fresh (avoid showing old route before Start) — key per challenge
   const cacheKey = `route:${challengeId || "default"}`;
   useEffect(() => {
     AsyncStorage.multiRemove([`${cacheKey}:coords`, `${cacheKey}:summary`]).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey]);
 
   useEffect(
@@ -614,7 +632,15 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [challengeDoc, challengeId, storyTypeSelection, storySeasonValue, storyEpisodeValue, storyPetValue, variantParam]);
+  }, [
+    challengeDoc,
+    challengeId,
+    storyTypeSelection,
+    storySeasonValue,
+    storyEpisodeValue,
+    storyPetValue,
+    variantParam,
+  ]);
 
   // 3) Permissions + watcher (start after we have DB points)
   useEffect(() => {
@@ -665,10 +691,9 @@ export default function MapScreen() {
           if (!lastRouteOriginRef.current || haversineM(lastRouteOriginRef.current, c) > MOVE_RECALC_M) {
             fetchRouteSafe(c, endPoint);
           }
-        }
+        },
       );
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     challengeStarted,
     startPoint?.latitude,
@@ -695,11 +720,11 @@ export default function MapScreen() {
     if (challengeStarted && nearEnd) {
       if (storyModeActive) {
         void stopStoryPlayback();
-      } else {
+      } else if (audioUrl) {
         audioRef.current?.fadeOut();
       }
     }
-  }, [challengeStarted, nearEnd, stopStoryPlayback, storyModeActive]);
+  }, [challengeStarted, nearEnd, stopStoryPlayback, storyModeActive, audioUrl]);
 
   // nudge to go to start
   useEffect(() => {
@@ -732,7 +757,7 @@ export default function MapScreen() {
       setChallengeStarted(false);
       if (storyModeActive) {
         void stopStoryPlayback();
-      } else {
+      } else if (audioUrl) {
         audioRef.current?.fadeOut();
       }
       Alert.alert(
@@ -744,7 +769,7 @@ export default function MapScreen() {
             onPress: () => router.replace("/(tabs)"),
           },
         ],
-        { cancelable: false }
+        { cancelable: false },
       );
     });
     return () => {
@@ -752,14 +777,14 @@ export default function MapScreen() {
         off();
       } catch {}
     };
-  }, [challengeStarted, router, stopStoryPlayback, storyModeActive]);
+  }, [challengeStarted, router, stopStoryPlayback, storyModeActive, audioUrl]);
 
   // cleanup pre-start fetcher on unmount
   useEffect(
     () => () => {
       if (preStartAbortRef.current) preStartAbortRef.current.abort();
     },
-    []
+    [],
   );
 
   const fetchPreStartRouteSafe = useCallback(
@@ -794,7 +819,7 @@ export default function MapScreen() {
         const json = await res.json();
         const coordsLL: LatLng[] =
           json?.features?.[0]?.geometry?.coordinates?.map(
-            (pt: [number, number]) => ({ latitude: pt[1], longitude: pt[0] })
+            (pt: [number, number]) => ({ latitude: pt[1], longitude: pt[0] }),
           ) ?? [];
 
         setPreStartRouteCoords(coordsLL.length > 1 ? coordsLL : []);
@@ -808,7 +833,7 @@ export default function MapScreen() {
         }
       }
     },
-    []
+    [],
   );
 
   // keep showing a guidance route to Start (before challenge starts)
@@ -904,7 +929,7 @@ export default function MapScreen() {
       const json = await res.json();
       const coordsLL: LatLng[] =
         json?.features?.[0]?.geometry?.coordinates?.map(
-          (pt: [number, number]) => ({ latitude: pt[1], longitude: pt[0] })
+          (pt: [number, number]) => ({ latitude: pt[1], longitude: pt[0] }),
         ) ?? [];
       const seg = json?.features?.[0]?.properties?.segments?.[0];
       const sum = json?.features?.[0]?.properties?.summary;
@@ -971,7 +996,13 @@ export default function MapScreen() {
   }, [initialRouteDistanceM, activeStory?.distanceMeters]);
 
   useEffect(() => {
-    if (!storyModeActive || !challengeStarted || !totalStoryDistance || totalStoryDistance <= 0) return;
+    if (
+      !storyModeActive ||
+      !challengeStarted ||
+      !totalStoryDistance ||
+      totalStoryDistance <= 0
+    )
+      return;
     const thresholds = Array.from({ length: STORY_SEGMENT_COUNT }, (_, idx) =>
       idx === 0 ? 0 : (idx * totalStoryDistance) / STORY_SEGMENT_COUNT,
     );
@@ -994,7 +1025,13 @@ export default function MapScreen() {
   }
 
   // Build audio source (allow remote or fallback local asset)
-  const audioSource = audioUrl && audioUrl.startsWith("http") ? { uri: audioUrl } : undefined;
+  const audioSource =
+    audioUrl && audioUrl.startsWith("http") ? { uri: audioUrl } : undefined;
+  const audioTitle = storyTitleValue ?? null;
+
+  const hasSimpleAudio = Boolean(audioSource);
+  const hasStoryAudio = storyModeActive && Boolean(activeStory);
+  const showAudioBar = challengeStarted && (hasStoryAudio || hasSimpleAudio);
 
   return (
     <View style={styles.container}>
@@ -1073,7 +1110,7 @@ export default function MapScreen() {
             navigatingRef.current = true;
             if (storyModeActive) {
               await stopStoryPlayback();
-            } else {
+            } else if (audioUrl) {
               audioRef.current?.fadeOut();
             }
             // finalize background tracking session and persist metrics
@@ -1126,7 +1163,9 @@ export default function MapScreen() {
             if (!canStartChallenge) {
               const lockMsg = challengeLocked
                 ? "You've already completed this challenge on both easy and hard modes."
-                : `You've already completed the ${variantParam === "hard" ? "hard" : "easy"} mode.`;
+                : `You've already completed the ${
+                    variantParam === "hard" ? "hard" : "easy"
+                  } mode.`;
               Alert.alert("Challenge locked", lockMsg);
               return;
             }
@@ -1147,7 +1186,7 @@ export default function MapScreen() {
               setStoryStatus("Ready");
               setStoryPlaying(false);
               void playSegmentAtIndex(0);
-            } else {
+            } else if (audioSource) {
               audioRef.current?.play();
             }
             if (userLocation && endPoint) await fetchRouteSafe(userLocation, endPoint);
@@ -1159,16 +1198,18 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bottom audio bar — only after Start */}
+      {/* Bottom audio bar — فقط لو فيه StorySegments أو audioUrl */}
       <AudioBar
         ref={audioRef}
         title={
-          storyModeActive && activeStory ? activeStory.title : challengeTitle || "The Lost Letter"
+          hasStoryAudio && activeStory
+            ? activeStory.title
+            : audioTitle || challengeTitle || "The Lost Letter"
         }
-        source={storyModeActive ? undefined : audioSource}
-        visible={challengeStarted && (!storyModeActive || Boolean(activeStory))}
+        source={hasStoryAudio ? undefined : audioSource}
+        visible={showAudioBar}
         controlledState={
-          storyModeActive
+          hasStoryAudio
             ? {
                 isPlaying: storyPlaying,
                 statusText: storyStatus,
@@ -1242,4 +1283,3 @@ const styles = StyleSheet.create({
   startPromptMessage: { color: "#E5E7EB", fontSize: 14, marginTop: 6 },
   startPromptCta: { color: "#93C5FD", fontSize: 13, marginTop: 10, fontWeight: "600" },
 });
-
