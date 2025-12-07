@@ -8,12 +8,13 @@ export default function ExperienceNewTabs() {
     <Tabs
       initialRouteName="challenge"
       screenOptions={{
-        // ❌ Hide Expo Router's built-in header completely
         headerShown: false,
 
-        // ✅ Custom tab bar styling (keep this)
-        tabBarStyle: { backgroundColor: '#cbeeaa', height: 64 },
-        tabBarActiveTintColor: '#000',
+        // ❌ Hide Expo Router's tab bar completely
+        tabBarStyle: { display: 'none' },
+
+        // (الألوان لن تظهر لأن البار اختفى)
+        tabBarActiveTintColor: '#000000ff',
         tabBarInactiveTintColor: '#294125',
         tabBarLabelStyle: { fontWeight: '800' },
       }}
@@ -31,7 +32,6 @@ export default function ExperienceNewTabs() {
           ),
         }}
       />
-      
     </Tabs>
   );
 }
