@@ -1356,7 +1356,6 @@ function renderStoryOption(
   selectedKey: string | null,
 ) {
   const active = selectedKey === story.progressKey;
-  const distanceLabel = story.distanceMeters ? mToKm(story.distanceMeters) : "—";
   const timeValue =
     typeof story.durationMinutes === "number"
       ? story.durationMinutes
@@ -1386,7 +1385,7 @@ function renderStoryOption(
         </Text>
       </View>
       <Text style={styles.modalItemMeta}>
-        {distanceLabel} • {timeLabel}
+        {timeLabel}
       </Text>
       <View style={styles.modalBadgeRow}>
         {story.completed ? (
