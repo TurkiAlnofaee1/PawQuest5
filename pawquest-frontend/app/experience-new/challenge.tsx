@@ -73,6 +73,16 @@ async function uploadToCloudinary(uri: string): Promise<string> {
 
 type Difficulty = "easy" | "hard";
 
+type FormErrors = {
+  name?: string;
+  location?: string;
+  route?: string;
+  difficulty?: string;
+  points?: string;
+  rewardName?: string;
+  petImage?: string;
+};
+
 export default function ChallengeFormScreen() {
   // form state
   const [name, setName] = useState("");
@@ -98,7 +108,12 @@ export default function ChallengeFormScreen() {
   const [petImageUri, setPetImageUri] = useState<string | null>(null);
 
   // difficulty
-  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [difficulty, setDifficulty] = useState<Difficulty | undefined>(undefined);
+
+  
+
+  // form errors
+  const [errors, setErrors] = useState<FormErrors>({});
 
   // ───────────────── helpers ─────────────────
   const onMapLongPress = async (e: LongPressEvent) => {
@@ -110,11 +125,13 @@ export default function ChallengeFormScreen() {
       setRouteCoords(null);
       setDistanceMeters(undefined);
       setEstimatedTimeMin(undefined);
-      setDifficulty(null);
+      setDifficulty(undefined);
+      setErrors((prev) => ({ ...prev, location: undefined, route: undefined }));
     } else if (!end) {
       setEnd(coord);
       try {
         await getSnappedRoute(start, coord);
+        setErrors((prev) => ({ ...prev, location: undefined, route: undefined }));
       } catch {
         Alert.alert("Route error", "Could not fetch walking route.");
         setRouteCoords(null);
@@ -125,7 +142,8 @@ export default function ChallengeFormScreen() {
       setRouteCoords(null);
       setDistanceMeters(undefined);
       setEstimatedTimeMin(undefined);
-      setDifficulty(null);
+      setDifficulty(undefined);
+      setErrors((prev) => ({ ...prev, location: undefined, route: undefined }));
     }
   };
 
@@ -139,7 +157,8 @@ export default function ChallengeFormScreen() {
       setRouteCoords(coords);
 
       if (distanceMeters != null) setDistanceMeters(Math.round(distanceMeters));
-      if (durationSec != null) setEstimatedTimeMin(Math.max(1, Math.round(durationSec / 60)));
+      if (durationSec != null)
+        setEstimatedTimeMin(Math.max(1, Math.round(durationSec / 60)));
     } catch {
       Alert.alert("Route error", "Failed to fetch walking route.");
       setRouteCoords(null);
@@ -152,7 +171,8 @@ export default function ChallengeFormScreen() {
     setRouteCoords(null);
     setDistanceMeters(undefined);
     setEstimatedTimeMin(undefined);
-    setDifficulty(null);
+    setDifficulty(undefined);
+    setErrors((prev) => ({ ...prev, location: undefined, route: undefined }));
   };
 
   const locateMe = async () => {
@@ -192,31 +212,76 @@ export default function ChallengeFormScreen() {
         quality: 0.9,
       });
 
-      if (!result.canceled) setPetImageUri(result.assets[0].uri);
+      if (!result.canceled) {
+        setPetImageUri(result.assets[0].uri);
+        setErrors((prev) => ({ ...prev, petImage: undefined }));
+      }
     } catch {
       alert("Could not open image picker.");
     }
   };
 
   // durations
-  const baseMin = useMemo(() => Math.max(1, Math.round(estimatedTimeMin ?? 10)), [estimatedTimeMin]);
+  const baseMin = useMemo(
+    () => Math.max(1, Math.round(estimatedTimeMin ?? 10)),
+    [estimatedTimeMin]
+  );
   const easyMin = useMemo(() => baseMin + 2, [baseMin]);
   const hardMin = useMemo(() => Math.max(1, Math.ceil(baseMin / 2)), [baseMin]);
-  const adjustedMin = difficulty === "easy" ? easyMin : difficulty === "hard" ? hardMin : null;
+  const adjustedMin =
+    difficulty === "easy" ? easyMin : difficulty === "hard" ? hardMin : null;
 
   // submit
   const onSubmit = async () => {
     if (saving) return;
 
-    if (!name.trim() || !start || !end) {
-      Alert.alert("Missing info", "Please enter a name and pick Start & End.");
-      return;
+    const nextErrors: FormErrors = {};
+
+    // Name required
+    if (!name.trim()) {
+      nextErrors.name = "Please enter a challenge name.";
     }
+
+    // Start & End required
+    if (!start || !end) {
+      nextErrors.location = "Long-press the map to set both Start and End points.";
+    }
+
+    // Route required (after picking start/end)
+    if (!routeCoords || routeCoords.length < 2) {
+      nextErrors.route = "Generate a walking route between Start and End.";
+    }
+
+    // Difficulty required
     if (!difficulty) {
-      Alert.alert("Pick difficulty", "Please choose Easy or Hard.");
-      return;
+      nextErrors.difficulty = "Please choose a difficulty.";
     }
+
+    // Points required
+    if (!points.trim()) {
+      nextErrors.points = "Please enter a points reward.";
+    }
+
+    // Reward name required
+    if (!rewardName.trim()) {
+      nextErrors.rewardName = "Please enter a suggested pet reward name.";
+    }
+
+    // Pet image required
+    if (!petImageUri) {
+      nextErrors.petImage = "Please pick a pet photo.";
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      return; // ⛔ block submit
+    }
+
+    // ✅ no validation errors
+    setErrors({});
+
     if (adjustedMin == null) {
+      // safety check – should not happen if route is set
       Alert.alert("Route missing", "Generate a route first.");
       return;
     }
@@ -232,6 +297,16 @@ export default function ChallengeFormScreen() {
           Alert.alert("Upload failed", err?.message ?? "Could not upload image");
         }
       }
+      // Safety guard for TypeScript – should never happen because of validation above
+        if (!start || !end || !difficulty) {
+           console.error("Unexpected missing field when submitting challenge", {
+                start,
+                 end,
+             difficulty,
+          });
+              return;
+            }
+
 
       await createChallenge({
         name: name.trim(),
@@ -256,7 +331,7 @@ export default function ChallengeFormScreen() {
       setCategory("City");
       clearPoints();
       setPetImageUri(null);
-      setDifficulty(null);
+      setDifficulty(undefined);
     } catch (e: any) {
       Alert.alert("Failed to save", String(e?.message ?? e));
     } finally {
@@ -270,7 +345,10 @@ export default function ChallengeFormScreen() {
       <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover" />
       <TopBar title="Create a Challenge +" backTo="/(tabs)/settings" />
 
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.formTitle}>Add Challenge</Text>
 
         {/* Name */}
@@ -280,14 +358,20 @@ export default function ChallengeFormScreen() {
           placeholder="Example: The Ride"
           placeholderTextColor="#6A6A6A"
           value={name}
-          onChangeText={setName}
+          onChangeText={(text) => {
+            setName(text);
+            if (errors.name) {
+              setErrors((prev) => ({ ...prev, name: undefined }));
+            }
+          }}
         />
+        {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
 
         {/* Location */}
         <Text style={styles.label}>Location</Text>
         <Text style={styles.helperText}>
-          Long-press once for <Text style={{ fontWeight: "800" }}>Start</Text>,  
-          again for <Text style={{ fontWeight: "800" }}>End</Text>.
+          Long-press once for <Text style={{ fontWeight: "800" }}>Start</Text>, again
+          for <Text style={{ fontWeight: "800" }}>End</Text>.
         </Text>
 
         <View style={styles.mapWrap}>
@@ -333,6 +417,13 @@ export default function ChallengeFormScreen() {
           )}
         </View>
 
+        {errors.location && (
+          <Text style={[styles.errorText, { marginTop: 6 }]}>{errors.location}</Text>
+        )}
+        {errors.route && (
+          <Text style={[styles.errorText, { marginTop: 2 }]}>{errors.route}</Text>
+        )}
+
         {/* Category */}
         <Text style={[styles.label, { marginTop: 8 }]}>Challenge Category</Text>
         <View style={styles.chipsRow}>
@@ -359,7 +450,12 @@ export default function ChallengeFormScreen() {
         <View style={styles.diffRow}>
           <TouchableOpacity
             style={[styles.diffBox, difficulty === "easy" && styles.diffBoxActive]}
-            onPress={() => setDifficulty("easy")}
+            onPress={() => {
+              setDifficulty("easy");
+              if (errors.difficulty) {
+                setErrors((prev) => ({ ...prev, difficulty: undefined }));
+              }
+            }}
           >
             <Text style={styles.diffTitle}>Easy</Text>
             {difficulty === "easy" && adjustedMin != null && (
@@ -370,7 +466,12 @@ export default function ChallengeFormScreen() {
 
           <TouchableOpacity
             style={[styles.diffBox, difficulty === "hard" && styles.diffBoxActive]}
-            onPress={() => setDifficulty("hard")}
+            onPress={() => {
+              setDifficulty("hard");
+              if (errors.difficulty) {
+                setErrors((prev) => ({ ...prev, difficulty: undefined }));
+              }
+            }}
           >
             <Text style={styles.diffTitle}>Hard</Text>
             {difficulty === "hard" && adjustedMin != null && (
@@ -379,42 +480,67 @@ export default function ChallengeFormScreen() {
             <Text style={styles.diffHint}>~Half the base time</Text>
           </TouchableOpacity>
         </View>
+        {errors.difficulty && (
+          <Text style={[styles.errorText, { marginTop: 4 }]}>{errors.difficulty}</Text>
+        )}
 
         {/* Points + Reward */}
-        <View style={styles.row}>
-          <View style={styles.col}>
-            <Text style={styles.label}>Points Reward</Text>
-            <TextInput
-              style={[styles.input, styles.elevated]}
-              placeholder="1000"
-              placeholderTextColor="#6A6A6A"
-              keyboardType="numeric"
-              value={points}
-              onChangeText={setPoints}
-            />
-          </View>
+        {/* Points + Suggested Reward */}
+<View style={styles.row}>
+  {/* Points Reward */}
+  <View style={styles.col}>
+    <Text style={styles.label}>Points Reward</Text>
+    <TextInput
+      style={[styles.input, styles.elevated]}
+      placeholder="1000"
+      placeholderTextColor="#6A6A6A"
+      keyboardType="numeric"
+      value={points}
+      onChangeText={(text) => {
+        setPoints(text);
+        if (errors.points) {
+          setErrors((prev) => ({ ...prev, points: undefined }));
+        }
+      }}
+    />
+    {errors.points && <Text style={styles.errorText}>{errors.points}</Text>}
+  </View>
 
-          <View style={styles.col}>
-            <Text style={styles.label}>Suggested Reward (pet)</Text>
-            <View style={styles.petRow}>
-              <TextInput
-                style={[styles.input, styles.elevated, { flex: 1 }]}
-                placeholder="e.g., Golden Dragon"
-                placeholderTextColor="#6A6A6A"
-                value={rewardName}
-                onChangeText={setRewardName}
-              />
+  {/* Suggested Reward (pet) */}
+  <View style={styles.col}>
+    <Text style={styles.label}>Suggested Reward (pet)</Text>
+    <TextInput
+      style={[styles.input, styles.elevated]}
+      placeholder="Golden Tiger"
+      placeholderTextColor="#6A6A6A"
+      value={rewardName}
+      onChangeText={(text) => {
+        setRewardName(text);
+        if (errors.rewardName) {
+          setErrors((prev) => ({ ...prev, rewardName: undefined }));
+        }
+      }}
+      autoCapitalize="words"
+    />
+    {errors.rewardName && (
+      <Text style={styles.errorText}>{errors.rewardName}</Text>
+    )}
+  </View>
+</View>
 
-              <TouchableOpacity style={styles.pickBtn} onPress={pickPetPhoto}>
-                <Text style={styles.pickBtnText}>Pick photo</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+{/* Pick photo – separated below */}
+<View style={styles.pickRow}>
+  <TouchableOpacity style={styles.pickBtn} onPress={pickPetPhoto}>
+    <Text style={styles.pickBtnText}>Pick photo</Text>
+  </TouchableOpacity>
+</View>
+{!petImageUri && errors.petImage && (
+  <Text style={styles.errorText}>{errors.petImage}</Text>
+)}
 
-        {petImageUri && (
-          <Image source={{ uri: petImageUri }} style={styles.petPreview} />
-        )}
+{petImageUri && (
+  <Image source={{ uri: petImageUri }} style={styles.petPreview} />
+)}
 
         <TouchableOpacity
           style={[styles.submitBtn, styles.elevated]}
@@ -469,6 +595,14 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+
+  errorText: {
+    color: "#991B1B",
+    fontSize: 15,
+    marginTop: 4,
+    marginLeft: 10,
+    fontWeight: "700",
   },
 
   row: { flexDirection: "row", gap: 12, marginTop: 6 },
@@ -569,14 +703,24 @@ const styles = StyleSheet.create({
   chipSelected: { borderColor: "#000" },
   chipText: { fontWeight: "800", color: "#1f2722" },
 
-  petRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  petRow: { 
+    flexDirection: "row",
+    alignItems: "center", gap: 10 
+  },
+
+  pickRow: {
+  marginTop: 8,
+  alignItems: "center",   
+},
 
   pickBtn: {
-    backgroundColor: "#111",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-  },
+  backgroundColor: "#111",
+  width: "100%",          
+  alignItems: "center",  
+  paddingVertical: 14,  
+  borderRadius: 999,     
+  marginTop: 4,
+},
 
   pickBtnText: { color: "#fff", fontWeight: "800" },
 
@@ -587,7 +731,15 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
-  submitBtn: {
+  rewardInput: {
+  flex: 1,
+  minHeight: 52,       
+  fontSize: 16,
+  paddingHorizontal: 16,
+ 
+  },
+
+ submitBtn: {
     marginTop: 14,
     backgroundColor: "#111",
     borderRadius: 999,
