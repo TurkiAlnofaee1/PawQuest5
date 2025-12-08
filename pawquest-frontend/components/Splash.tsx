@@ -11,7 +11,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-const backgroundColours = ['#0C2E16', '#1B5125', '#2F7D32'];
+const backgroundColours = ['#0C2E16', '#1B5125', '#2F7D32'] as const;
 
 const logoSource = require('../assets/images/PawquestLogo.png');
 

@@ -341,7 +341,9 @@ export default function ChallengeReward() {
     let cancelled = false;
     (async () => {
       try {
-        const existing = await getUserChallengeRating(challengeId, auth.currentUser.uid);
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+        const existing = await getUserChallengeRating(challengeId, uid);
         if (!cancelled) {
           setInitialRating(existing ?? undefined);
           setRatingVisible(true);

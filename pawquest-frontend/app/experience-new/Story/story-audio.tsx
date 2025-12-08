@@ -20,7 +20,8 @@ export default function StoryAudioScreen() {
         setLoading(true);
 
         console.log("🎧 Requesting StreamElements TTS...");
-        const audioUri = await generateVoiceFromElevenLabs(story);
+        const storyText = Array.isArray(story) ? story[0] : story;
+        const audioUri = await generateVoiceFromElevenLabs(storyText);
 const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
 setSound(sound);
 await sound.playAsync();
