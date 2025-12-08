@@ -17,6 +17,9 @@ import * as ImagePicker from 'expo-image-picker';
 
 import { signUpWithEmail } from '@/src/lib/auth';
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
+const PASSWORD_REGEX = /^(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}$/;
+
 const bgSource = require('../../assets/images/ImageBackground.jpg');
 const logoSource = require('../../assets/images/PawquestLogo.png');
 
@@ -75,6 +78,7 @@ export default function SignupScreen() {
 
   const onSubmit = async () => {
     setError(null);
+    const trimmedEmail = email.trim();
     // Require avatar before signing up; keep button clickable and show inline error on submit
     if (!avatar?.uri) {
       setError('Please add an avatar to continue.');
@@ -85,12 +89,20 @@ export default function SignupScreen() {
       setError('Please add a username.');
       return;
     }
-    if (!email.trim() || !password) {
+    if (!trimmedEmail || !password) {
       setError('Email and password are required.');
+      return;
+    }
+    if (!EMAIL_REGEX.test(trimmedEmail)) {
+      setError('Please enter a valid email address.');
       return;
     }
     if (password.length < 6) {
       setError('Password must be at least 6 characters.');
+      return;
+    }
+    if (!PASSWORD_REGEX.test(password)) {
+      setError('Password needs 1 uppercase letter and 1 special character.');
       return;
     }
      // Require age and weight before signing up (show inline error if missing)
@@ -120,7 +132,7 @@ export default function SignupScreen() {
     }
 
     setLoading(true);
-    const res = await signUpWithEmail(email.trim(), password, {
+    const res = await signUpWithEmail(trimmedEmail, password, {
       displayName: displayName.trim(),
       age: ageValue ?? undefined,
       weight: weightValue ?? undefined,
