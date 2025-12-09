@@ -105,20 +105,6 @@ export default function LoginScreen() {
             </Text>
           </View>
 
-          <View style={styles.social}>
-            <Text style={styles.socialText}>Or Continue With</Text>
-            <View style={styles.socialIcons}>
-              <TouchableOpacity style={styles.socialButton} accessibilityRole="button">
-                <FontAwesome5 name="google" size={18} color="#EA4335" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.socialButton} accessibilityRole="button">
-                <FontAwesome5 name="github" size={18} color="#0F172A" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.socialButton} accessibilityRole="button">
-                <FontAwesome5 name="facebook" size={18} color="#1877F2" />
-              </TouchableOpacity>
-            </View>
-          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </ImageBackground>
