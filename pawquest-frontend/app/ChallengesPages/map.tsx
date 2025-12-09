@@ -4,6 +4,7 @@ import ChallengeHUD from "../../components/ChallengeHUD";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { Audio } from "expo-av";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -18,6 +19,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
 
 // 🔥 Firestore
@@ -46,6 +48,7 @@ const ORS_API_KEY =
   "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjNhYmYxMzBmODQwNzQ2ODM4Mzk3M2RmNjcyNzExMzAyIiwiaCI6Im11cm11cjY0In0=";
 
 // thresholds
+const START_PROXIMITY_M = 20;
 const PROXIMITY_M = 50;
 const MOVE_RECALC_M = 8;
 const RECALC_MIN_GAP_MS = 5000;
@@ -166,6 +169,7 @@ function nearestRouteIndex(route: LatLng[], you: LatLng): number {
 export default function MapScreen() {
   const router = useRouter();
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const {
     challengeId: challengeIdParam,
     difficulty,
@@ -204,6 +208,13 @@ export default function MapScreen() {
   const storyTypeSelection =
     storyTypeValue === "season" || storyTypeValue === "pet" ? storyTypeValue : null;
   const userId = auth.currentUser?.uid ?? null;
+  const handleBackPress = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)/challenges");
+    }
+  }, [router]);
 
   // From DB
   const [challengeTitle, setChallengeTitle] = useState<string | undefined>(undefined);
@@ -411,8 +422,8 @@ export default function MapScreen() {
   }, [challengeStarted]);
 
   useEffect(() => {
-    navigation.setOptions({ headerShown: !challengeStarted });
-  }, [navigation, challengeStarted]);
+    navigation.setOptions({ headerShown: false });
+  }, [navigation]);
 
   const challengeLocked = useMemo(
     () => isChallengeFullyLocked(variantCompletions),
@@ -669,7 +680,7 @@ export default function MapScreen() {
           const c = { latitude: newLoc.coords.latitude, longitude: newLoc.coords.longitude };
           setUserLocation(c);
 
-          if (startPoint) setNearStart(haversineM(c, startPoint) < PROXIMITY_M);
+          if (startPoint) setNearStart(haversineM(c, startPoint) < START_PROXIMITY_M);
           if (endPoint) setNearEnd(haversineM(c, endPoint) < PROXIMITY_M);
 
           if (!challengeStarted) return;
@@ -857,7 +868,7 @@ export default function MapScreen() {
     }
 
     const distanceToStart = haversineM(userLocation, startPoint);
-    if (!Number.isFinite(distanceToStart) || distanceToStart < PROXIMITY_M) {
+    if (!Number.isFinite(distanceToStart) || distanceToStart < START_PROXIMITY_M) {
       setPreStartRouteCoords([]);
       preStartLastOriginRef.current = null;
       preStartLastFetchAtRef.current = 0;
@@ -1035,6 +1046,14 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
+      {!challengeStarted && (
+        <View style={[styles.topBar, { paddingTop: insets.top + 6 }]}>
+          <TouchableOpacity style={styles.backPill} onPress={handleBackPress} activeOpacity={0.85}>
+            <Ionicons name="chevron-back" size={20} color="#FFFFFF" />
+            <Text style={styles.backText}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <MapView style={styles.map} region={region} showsUserLocation>
         {hasPreStartRoute && (
           <Polyline coordinates={preStartRouteCoords} strokeWidth={4} strokeColor="#2F80ED" />
@@ -1081,7 +1100,7 @@ export default function MapScreen() {
       {showStartPrompt && !challengeStarted && canStartChallenge && (
         <TouchableOpacity
           activeOpacity={0.9}
-          style={styles.startPromptCard}
+          style={[styles.startPromptCard, { top: insets.top + 60 }]}
           onPress={handleStartPromptPress}
         >
           <Text style={styles.startPromptTitle}>Head to the start point</Text>
@@ -1226,6 +1245,28 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   map: { flex: 1 },
+  topBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    zIndex: 70,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  backPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: "rgba(17, 24, 39, 0.82)",
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  backText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700", marginLeft: 6 },
 
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   info: { color: "#fff", marginTop: 8 },
@@ -1265,7 +1306,6 @@ const styles = StyleSheet.create({
   btnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
   startPromptCard: {
     position: "absolute",
-    top: 60,
     left: 20,
     right: 20,
     padding: 16,
