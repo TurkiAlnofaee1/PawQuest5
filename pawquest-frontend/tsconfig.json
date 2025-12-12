@@ -9,10 +9,7 @@
       "dom"
     ],
     "moduleResolution": "node",
-    "types": ["jest"],
-    "typeRoots": ["./@types", "./node_modules/@types"],
     "paths": {
-      "@testing-library/react-native": ["./node_modules/@testing-library/react-native"],
       "@/*": [
         "./*"
       ]
