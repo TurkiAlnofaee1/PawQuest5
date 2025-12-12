@@ -261,7 +261,7 @@ export default function ProgressScreen() {
               <Text style={styles.sectionLabel}>Calories stats:</Text>
               <StatCard
                 title="Calories"
-                avgLabel="Daily Average"
+                avgLabel="Daily Avg"
                 avgValue={avgCalories}
                 unitRight="kcal"
                 data={calories7}
@@ -274,7 +274,7 @@ export default function ProgressScreen() {
               </Text>
               <StatCard
                 title="Steps"
-                avgLabel="Daily Average"
+                avgLabel="Daily Avg"
                 avgValue={avgSteps}
                 unitRight="steps"
                 data={steps7}
