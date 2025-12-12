@@ -21,6 +21,14 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { LatLng, Marker, Polyline } from "react-native-maps";
+import {
+  formatDistance,
+  formatDuration,
+  haversineM,
+  nearestRouteIndex,
+  toLatLng,
+  GeoPointLike,
+} from "./mapUtils";
 
 // 🔥 Firestore
 import { auth, db } from "../../src/lib/firebase";
@@ -66,15 +74,6 @@ type RunStats = {
   lastPoint: LatLng | null;
 };
 
-type GeoPointLike = {
-  latitude?: number;
-  longitude?: number;
-  _lat?: number;
-  _long?: number;
-  lat?: number;
-  lng?: number;
-};
-
 type VariantDoc = {
   start?: GeoPointLike;
   end?: GeoPointLike;
@@ -95,31 +94,6 @@ type ChallengeDoc = {
   [key: string]: any;
 };
 
-const toLatLng = (value: unknown): LatLng | null => {
-  if (!value || typeof value !== "object") return null;
-  const geo = value as GeoPointLike;
-  const lat =
-    typeof geo.latitude === "number"
-      ? geo.latitude
-      : typeof geo._lat === "number"
-      ? geo._lat
-      : typeof geo.lat === "number"
-      ? geo.lat
-      : undefined;
-  const lng =
-    typeof geo.longitude === "number"
-      ? geo.longitude
-      : typeof geo._long === "number"
-      ? geo._long
-      : typeof geo.lng === "number"
-      ? geo.lng
-      : undefined;
-  if (typeof lat === "number" && Number.isFinite(lat) && typeof lng === "number" && Number.isFinite(lng)) {
-    return { latitude: lat, longitude: lng };
-  }
-  return null;
-};
-
 const readVariant = (doc: ChallengeDoc, key: string | undefined): VariantDoc | null => {
   if (!key) return null;
   const fromVariants = doc.variants?.[key];
@@ -129,42 +103,6 @@ const readVariant = (doc: ChallengeDoc, key: string | undefined): VariantDoc | n
   return null;
 };
 
-// math helpers
-const haversineM = (a: LatLng, b: LatLng) => {
-  const R = 6371e3;
-  const φ1 = (a.latitude * Math.PI) / 180;
-  const φ2 = (b.latitude * Math.PI) / 180;
-  const dφ = ((b.latitude - a.latitude) * Math.PI) / 180;
-  const dλ = ((b.longitude - a.longitude) * Math.PI) / 180;
-  const s =
-    Math.sin(dφ / 2) ** 2 +
-    Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-};
-const formatDistance = (m: number) =>
-  m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-const formatDuration = (s: number) => {
-  const min = Math.round(s / 60);
-  if (min < 60) return `${min} min`;
-  const h = Math.floor(min / 60);
-  const m2 = min % 60;
-  return `${h}h ${m2}m`;
-};
-function nearestRouteIndex(route: LatLng[], you: LatLng): number {
-  if (route.length === 0) return 0;
-  let bestI = 0;
-  let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < route.length; i++) {
-    const dx = route[i].latitude - you.latitude;
-    const dy = route[i].longitude - you.longitude;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < best) {
-      best = d2;
-      bestI = i;
-    }
-  }
-  return bestI;
-}
 
 export default function MapScreen() {
   const router = useRouter();
