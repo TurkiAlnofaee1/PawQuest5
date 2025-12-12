@@ -1,3 +1,4 @@
+import axios from "axios";
 import { Buffer } from "buffer";
 
 const API_KEY = process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY;
