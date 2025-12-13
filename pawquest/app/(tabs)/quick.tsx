@@ -1157,12 +1157,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 4,
   },
-  completedBadge: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#10B981",
-  },
-
   modalSeason: {
     paddingVertical: 4,
     paddingLeft: 4,
