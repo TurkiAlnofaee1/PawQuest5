@@ -699,7 +699,6 @@ export default function QuickChallengeDetails() {
         <View style={styles.card}>
           <Text style={styles.title}>XP Rules</Text>
           <Text style={styles.item}>- You earn 1 XP per 5 steps.</Text>
-          <Text style={styles.item}>- 1.5 km → 1 km (no decimals).</Text>
           <Text style={styles.item}>
             - Only your equipped pet evolves.
           </Text>
