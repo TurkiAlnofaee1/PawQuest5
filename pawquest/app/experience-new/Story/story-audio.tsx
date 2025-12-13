@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ImageBackground } from "react-native";
 import { Audio } from "expo-av";
 import { useLocalSearchParams } from "expo-router";
@@ -10,47 +10,84 @@ const bgImage = require("../../../assets/images/ImageBackground.jpg");
 
 export default function StoryAudioScreen() {
   const { story, title } = useLocalSearchParams();
-  const [sound, setSound] = useState<any>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isCancelled = false;
+
     const load = async () => {
       try {
         setLoading(true);
+        setError(null);
+        setIsPlaying(false);
 
-        console.log("🎧 Requesting StreamElements TTS...");
+        // Always unload any previous sound before loading a new one
+        if (soundRef.current) {
+          await soundRef.current.unloadAsync();
+          soundRef.current = null;
+        }
+
+        console.log("🎧 Requesting ElevenLabs TTS...");
         const storyText = Array.isArray(story) ? story[0] : story;
+        if (!storyText || typeof storyText !== "string" || storyText.trim().length === 0) {
+          setError("No story text available to generate audio.");
+          setLoading(false);
+          return;
+        }
+        if (storyText.length > 5000) {
+          setError("Story is too long for TTS (max 5000 characters).");
+          setLoading(false);
+          return;
+        }
+
         const audioUri = await generateVoiceFromElevenLabs(storyText);
-const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
-setSound(sound);
-await sound.playAsync();
+        if (!audioUri) {
+          setError("Audio unavailable. Check your ElevenLabs key/credits.");
+          return;
+        }
 
+        const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
+        if (isCancelled) {
+          await sound.unloadAsync();
+          return;
+        }
+        soundRef.current = sound;
+        await sound.playAsync();
         setIsPlaying(true);
-
-      } catch (err) {
-        console.error("Audio Error:", err);
+      } catch (err: any) {
+        const message = err?.message ?? "Unable to play audio.";
+        console.warn("Audio Error:", message);
+        setError("Audio unavailable. Please try again.");
       } finally {
-        setLoading(false);
+        if (!isCancelled) {
+          setLoading(false);
+        }
       }
     };
 
     load();
 
     return () => {
-      if (sound) sound.unloadAsync();
+      isCancelled = true;
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
     };
-  }, []);
+  }, [story]);
 
   const togglePlayPause = async () => {
-    if (!sound) return;
-    const status = await sound.getStatusAsync();
+    if (!soundRef.current) return;
+    const status = await soundRef.current.getStatusAsync();
 
     if (status.isPlaying) {
-      await sound.pauseAsync();
+      await soundRef.current.pauseAsync();
       setIsPlaying(false);
     } else {
-      await sound.playAsync();
+      await soundRef.current.playAsync();
       setIsPlaying(true);
     }
   };
@@ -58,15 +95,17 @@ await sound.playAsync();
   return (
     <ImageBackground source={bgImage} style={styles.bg}>
       <View style={styles.container}>
-        <TopBar title="Story Audio 🎧" backTo="/(tabs)/settings" />
+        <TopBar title="Story Audio" backTo="/(tabs)/settings" />
 
         <Text style={styles.title}>{title || "Generated Story"}</Text>
 
         {loading ? (
           <ActivityIndicator size="large" color="#111" />
+        ) : error ? (
+          <Text style={styles.error}>{error}</Text>
         ) : (
           <TouchableOpacity style={styles.playBtn} onPress={togglePlayPause}>
-            <Text style={styles.playText}>{isPlaying ? "⏸ Pause" : "▶️ Play"}</Text>
+            <Text style={styles.playText}>{isPlaying ? "Pause" : "Play"}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -88,5 +127,11 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 18,
     fontWeight: "bold",
+  },
+  error: {
+    color: "#c00",
+    fontSize: 16,
+    textAlign: "center",
+    paddingHorizontal: 24,
   },
 });
