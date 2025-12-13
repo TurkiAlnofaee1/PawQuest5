@@ -815,7 +815,7 @@ const Home: React.FC = () => {
               <View>
                 <Text style={styles.notificationsTitle}>Notifications</Text>
                 <Text style={styles.notificationsSubtitle}>
-                  {notifications.length ? 'Tap a notification to view details' : 'No new alerts right now'}
+                  {notifications.length ? '' : 'No new alerts right now'}
                 </Text>
               </View>
               <TouchableOpacity onPress={handleCloseNotifications} accessibilityLabel="Close notifications">
