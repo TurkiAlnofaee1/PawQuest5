@@ -4,8 +4,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Buffer } from "buffer";
 
 const API_KEY = process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY;
-const VOICE_ID =
-  process.env.EXPO_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel
+const VOICE_ID = process.env.EXPO_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel
 
 const BASE_URL = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
 const TTS_CACHE_DIR = `${FileSystem.cacheDirectory}tts/`;
@@ -21,12 +20,16 @@ async function ensureDir(path: string) {
   }
 }
 
-export async function generateVoiceFromElevenLabs(text: string): Promise<string> {
+export async function generateVoiceFromElevenLabs(text: string): Promise<string | null> {
   if (!API_KEY) {
-    throw new Error("Missing ELEVENLABS API key. Add EXPO_PUBLIC_ELEVENLABS_API_KEY to .env");
+    console.warn("Missing ELEVENLABS API key. Add EXPO_PUBLIC_ELEVENLABS_API_KEY to .env");
+    return null;
   }
 
-  console.log("🎧 Sending text to ElevenLabs...");
+  console.log("🎧 Sending text to ElevenLabs...", {
+    length: text?.length ?? 0,
+    voiceId: VOICE_ID,
+  });
 
   try {
     const response = await axios.post(
@@ -60,16 +63,12 @@ export async function generateVoiceFromElevenLabs(text: string): Promise<string>
     });
     return fileUri;
   } catch (err: any) {
-    console.log(
-      "❌ ElevenLabs TTS Error:",
-      err.response?.status,
-      err.response?.data ?? err?.message ?? err,
-    );
+    const status = err.response?.status;
+    const detail =
+      typeof err.response?.data === "string" ? err.response.data : JSON.stringify(err.response?.data ?? {});
+    console.warn("🚫 ElevenLabs TTS Error:", status, detail || err?.message || err);
 
-    if (err.response?.status === 401) {
-      throw new Error("401 Unauthorized — your API key is invalid or missing permissions.");
-    }
-
-    throw new Error(err?.message ?? "Failed to generate ElevenLabs audio.");
+    // Return null to avoid unhandled errors in the UI; caller will show a friendly message.
+    return null;
   }
 }
