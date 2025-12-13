@@ -390,6 +390,11 @@ export default function ChallengeDetails() {
       active = false;
     };
   }, [normalizedId, userId]);
+const [openSeason, setOpenSeason] = useState<{ [key: string]: boolean }>({});
+const [openPet, setOpenPet] = useState(false);
+const [openAiStories, setOpenAiStories] = useState(false);
+const [openAiSummary, setOpenAiSummary] = useState(false);
+const [openNoAudio, setOpenNoAudio] = useState(false);
 
   /* ------------------ load segmented stories (Herb + Pet) ------------------ */
   useEffect(() => {
@@ -766,6 +771,11 @@ export default function ChallengeDetails() {
       Alert.alert("Write something", "Please enter a short text first.");
       return;
     }
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    if (words.length < 200) {
+      Alert.alert("AI Summary", "Please write at least 200 words for a good summary.");
+      return;
+    }
     try {
       setAiSummaryGenerating(true);
       // 1) Gemini يلخص/يحول النص لقصة قصيرة
@@ -1128,162 +1138,225 @@ export default function ChallengeDetails() {
           </Pressable>
         </View>
 
-        {/* Story Picker */}
-        <Modal
-          visible={storyPickerOpen}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setStoryPickerOpen(false)}
-        >
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setStoryPickerOpen(false)}
-          >
-            <View style={styles.modalSheet}>
-              <Text style={styles.modalTitle}>Choose a Story</Text>
-              <ScrollView style={{ maxHeight: 420 }}>
-                {storiesLoading && aiStoriesLoading ? (
-                  <ActivityIndicator style={{ paddingVertical: 32 }} />
-                ) : (
-                  <>
-                    {/* Herb / Season stories */}
-                    {seasonSections.map((section) => {
-                      const expanded = true; // نخليها مفتوحة دايم مثل Herb of Dawn
-                      return (
-                        <View
-                          key={section.seasonId}
-                          style={styles.modalSeason}
-                        >
-                          <View style={styles.storyRowHeader}>
-                            <Text style={styles.modalSectionTitle}>
-                              {section.title}
-                            </Text>
-                            <View
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                gap: 6,
-                              }}
-                            >
-                              {section.episodes.every((episode) => episode.completed) ? (
-                                <Text style={styles.completedBadge}>
-                                  Completed
-                                </Text>
-                              ) : null}
-                            </View>
-                          </View>
+       {/* Story Picker */}
+<Modal
+  visible={storyPickerOpen}
+  transparent
+  animationType="fade"
+  onRequestClose={() => setStoryPickerOpen(false)}
+>
+  <Pressable
+    style={styles.modalBackdrop}
+    onPress={() => setStoryPickerOpen(false)}
+  >
+    <View style={styles.modalSheet}>
+      <Text style={styles.modalTitle}>Choose a Story</Text>
 
-                          {expanded
-                            ? section.episodes.map((ep) =>
-                                renderStoryOption(ep, handleSelectStory, pal, selectedStoryKey),
-                              )
-                            : null}
-                        </View>
-                      );
-                    })}
+      <ScrollView style={{ maxHeight: 420 }}>
+        {storiesLoading && aiStoriesLoading ? (
+          <ActivityIndicator style={{ paddingVertical: 32 }} />
+        ) : (
+          <>
 
-                    {/* Pet Story */}
-                    {petStoryOptions.length ? (
-                      <View style={styles.modalSeason}>
-                        <Text style={styles.modalSectionTitle}>Pet Story</Text>
-                        {petStoryOptions.map((story) =>
+            {/* 1) Herb / Season Stories (DROPDOWN) */}
+            <Pressable
+              style={styles.dropdownHeader}
+              onPress={() => setOpenSeason(!openSeason)}
+            >
+              <Text style={styles.modalSectionTitle}>The Herb of Dawn</Text>
+              <Text style={styles.dropdownArrow}>{openSeason ? "v" : ">"}</Text>
+            </Pressable>
+
+            {openSeason &&
+              seasonSections?.map?.((section) => {
+                const expanded = true;
+                return (
+                  <View key={section.seasonId} style={styles.modalSeason}>
+                    <View style={styles.storyRowHeader}>
+                      <Text style={styles.modalSectionTitle}>{section.title}</Text>
+                      {section.episodes.every((ep) => ep.completed) ? (
+                        <Text style={styles.completedBadge}>Completed</Text>
+                      ) : null}
+                    </View>
+
+                    {expanded
+                      ? section.episodes.map((ep) =>
                           renderStoryOption(
-                            story,
+                            ep,
                             handleSelectStory,
                             pal,
-                            selectedStoryKey,
-                          ),
-                        )}
-                      </View>
-                    ) : null}
+                            selectedStoryKey
+                          )
+                        )
+                      : null}
+                  </View>
+                );
+              })}
 
-                    {/* AI Stories */}
-                    {aiStories.length ? (
-                      <View style={styles.modalSeason}>
-                        <Text style={styles.modalSectionTitle}>AI Stories</Text>
-                        {aiStories.map((story) => {
-                          const active = selectedAiStoryId === story.id &&
-                            selectionKind === "aiStory";
-                          return (
-                            <Pressable
-                              key={story.id}
-                              style={[
-                                styles.modalItem,
-                                active && styles.modalItemActive,
-                              ]}
-                              onPress={() => handleSelectAiStory(story)}
-                            >
-                              <View style={styles.storyRowHeader}>
-                                <Text
-                                  style={[
-                                    styles.modalItemText,
-                                    active && { color: pal.strong },
-                                  ]}
-                                  numberOfLines={1}
-                                >
-                                  {story.title}
-                                </Text>
-                                {aiStoryGeneratingId === story.id ? (
-                                  <ActivityIndicator size="small" />
-                                ) : null}
-                              </View>
-                              <Text
-                                style={styles.modalItemMeta}
-                                numberOfLines={2}
-                              >
-                                Tap to play this AI-generated story.
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-                    ) : null}
 
-                    {/* AI Summary */}
-                    <View style={styles.modalSeason}>
-                      <Text style={styles.modalSectionTitle}>AI Summary</Text>
-                      <Pressable
-                        style={styles.modalItem}
-                        onPress={() => {
-                          setStoryPickerOpen(false);
-                          openAiSummaryModal();
-                        }}
-                      >
-                        <Text style={styles.modalItemText}>
-                          Write your own text
-                        </Text>
-                        <Text style={styles.modalItemMeta}>
-                          We&apos;ll summarize it and turn it into a single audio
-                          story.
-                        </Text>
-                      </Pressable>
-                    </View>
+            {/* 2) Pet Story (DROPDOWN) */}
+            {!!petStoryOptions?.length && (
+              <>
+                <Pressable
+                  style={styles.dropdownHeader}
+                  onPress={() => setOpenPet(!openPet)}
+                >
+                  <Text style={styles.modalSectionTitle}>Pet Story</Text>
+                  <Text style={styles.dropdownArrow}>{openPet ? "v" : ">"}</Text>
+                </Pressable>
 
-                    {/* No audio */}
-                    <View style={styles.modalSeason}>
-                      <Text style={styles.modalSectionTitle}>Other</Text>
-                      <Pressable
-                        style={styles.modalItem}
-                        onPress={handleSelectNoAudio}
-                      >
-                        <Text style={styles.modalItemText}>No audio</Text>
-                        <Text style={styles.modalItemMeta}>
-                          Start the challenge without any audio story.
-                        </Text>
-                      </Pressable>
-                    </View>
-
-                    {!petStoryOptions.length &&
-                    !seasonSections.length &&
-                    !aiStories.length ? (
-                      <Text style={styles.modalEmpty}>No stories found</Text>
-                    ) : null}
-                  </>
+                {openPet && (
+                  <View style={styles.modalSeason}>
+                    {petStoryOptions.map((story) =>
+                      renderStoryOption(
+                        story,
+                        handleSelectStory,
+                        pal,
+                        selectedStoryKey
+                      )
+                    )}
+                  </View>
                 )}
-              </ScrollView>
-            </View>
-          </Pressable>
-        </Modal>
+              </>
+            )}
+
+
+            {/* 3) AI Stories (DROPDOWN) — YOUR WORKING TIME CODE KEPT EXACTLY */}
+            {!!aiStories?.length && (
+              <>
+                <Pressable
+                  style={styles.dropdownHeader}
+                  onPress={() => setOpenAiStories(!openAiStories)}
+                >
+                  <Text style={styles.modalSectionTitle}>AI Stories</Text>
+                  <Text style={styles.dropdownArrow}>
+                    {openAiStories ? "v" : ">"}
+                  </Text>
+                </Pressable>
+
+                {openAiStories && (
+                  <View style={styles.modalSeason}>
+                    {aiStories.map((story) => {
+                      const active =
+                        selectedAiStoryId === story.id &&
+                        selectionKind === "aiStory";
+
+                      // KEEP YOUR WORKING DURATION CODE
+                      const words = story.text.split(/\s+/).length;
+                      const minutesFloat = words / 130;
+                      const totalSeconds = Math.max(
+                        1,
+                        Math.round(minutesFloat * 60)
+                      );
+                      const mm = String(Math.floor(totalSeconds / 60)).padStart(
+                        2,
+                        "0"
+                      );
+                      const ss = String(totalSeconds % 60).padStart(2, "0");
+                      const durationLabel = `${mm}:${ss}`;
+
+                      return (
+                        <Pressable
+                          key={story.id}
+                          style={[
+                            styles.modalItem,
+                            active && styles.modalItemActive,
+                          ]}
+                          onPress={() => handleSelectAiStory(story)}
+                        >
+                          <Text
+                            style={[
+                              styles.modalItemText,
+                              active && { color: pal.strong },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {story.title}
+                          </Text>
+
+                          <Text
+                            style={[
+                              styles.modalItemMeta,
+                              active && { color: pal.strong },
+                            ]}
+                          >
+                            {durationLabel}
+                          </Text>
+
+                          {aiStoryGeneratingId === story.id && (
+                            <ActivityIndicator size="small" />
+                          )}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </>
+            )}
+
+
+            {/* 4) AI Summary (DROPDOWN) */}
+            <Pressable
+              style={styles.dropdownHeader}
+              onPress={() => setOpenAiSummary(!openAiSummary)}
+            >
+              <Text style={styles.modalSectionTitle}>AI Summary</Text>
+              <Text style={styles.dropdownArrow}>
+                {openAiSummary ? "v" : ">"}
+              </Text>
+            </Pressable>
+
+            {openAiSummary && (
+              <View style={styles.modalSeason}>
+                <Pressable
+                  style={styles.modalItem}
+                  onPress={() => {
+                    setStoryPickerOpen(false);
+                    openAiSummaryModal();
+                  }}
+                >
+                  <Text style={styles.modalItemText}>Write your own text</Text>
+                  <Text style={styles.modalItemMeta}>
+                    We’ll summarize it and turn it into a single audio story.
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+
+
+            {/* 5) No Audio (DROPDOWN) */}
+            <Pressable
+              style={styles.dropdownHeader}
+              onPress={() => setOpenNoAudio(!openNoAudio)}
+            >
+              <Text style={styles.modalSectionTitle}>No Audio</Text>
+              <Text style={styles.dropdownArrow}>{openNoAudio ? "v" : ">"}</Text>
+            </Pressable>
+
+            {openNoAudio && (
+              <View style={styles.modalSeason}>
+                <Pressable
+                  style={styles.modalItem}
+                  onPress={handleSelectNoAudio}
+                >
+                  <Text style={styles.modalItemText}>No audio</Text>
+                  <Text style={styles.modalItemMeta}>
+                    Start the challenge without any audio story.
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+
+          </>
+        )}
+      </ScrollView>
+    </View>
+  </Pressable>
+</Modal>
+
+
+
+
 
         {/* AI Summary Modal */}
         <Modal
@@ -1431,6 +1504,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   tabText: { fontSize: 15, fontWeight: "900" },
+dropdownHeader: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  paddingVertical: 10,
+},
+
+dropdownArrow: {
+  fontSize: 18,
+  fontWeight: "900",
+},
 
   rewardCard: {
     marginHorizontal: 12,

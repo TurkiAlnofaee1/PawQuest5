@@ -1,4 +1,6 @@
 import axios from "axios";
+// Use legacy FileSystem API to avoid deprecation warnings in Expo SDK 54+
+import * as FileSystem from "expo-file-system/legacy";
 import { Buffer } from "buffer";
 
 const API_KEY = process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY;
@@ -6,6 +8,18 @@ const VOICE_ID =
   process.env.EXPO_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel
 
 const BASE_URL = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+const TTS_CACHE_DIR = `${FileSystem.cacheDirectory}tts/`;
+
+async function ensureDir(path: string) {
+  try {
+    const info = await FileSystem.getInfoAsync(path);
+    if (!info.exists) {
+      await FileSystem.makeDirectoryAsync(path, { intermediates: true });
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export async function generateVoiceFromElevenLabs(text: string): Promise<string> {
   if (!API_KEY) {
@@ -37,16 +51,25 @@ export async function generateVoiceFromElevenLabs(text: string): Promise<string>
 
     console.log("🎧 ElevenLabs audio received.");
 
-    const base64 = Buffer.from(response.data, "binary").toString("base64");
-    const uri = `data:audio/mpeg;base64,${base64}`;
-    return uri;
+    // Save to temp file to avoid large data: URIs and reduce JS overhead
+    const base64 = Buffer.from(response.data).toString("base64");
+    await ensureDir(TTS_CACHE_DIR);
+    const fileUri = `${TTS_CACHE_DIR}tts-${Date.now().toString(36)}.mp3`;
+    await FileSystem.writeAsStringAsync(fileUri, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return fileUri;
   } catch (err: any) {
-    console.log("❌ ElevenLabs TTS Error:", err.response?.status, err.response?.data);
+    console.log(
+      "❌ ElevenLabs TTS Error:",
+      err.response?.status,
+      err.response?.data ?? err?.message ?? err,
+    );
 
     if (err.response?.status === 401) {
-      throw new Error("401 Unauthorized — Your API key is INVALID or missing permissions.");
+      throw new Error("401 Unauthorized — your API key is invalid or missing permissions.");
     }
 
-    throw new Error("Failed to generate ElevenLabs audio.");
+    throw new Error(err?.message ?? "Failed to generate ElevenLabs audio.");
   }
 }

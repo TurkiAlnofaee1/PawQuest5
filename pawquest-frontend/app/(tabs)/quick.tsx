@@ -1,5 +1,10 @@
 // app/ChallengesPages/QuickChallengeDetails.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,65 +21,132 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
-  query,
-  where,
 } from "firebase/firestore";
 
 import { auth, db } from "@/src/lib/firebase";
-import { PET_MAX_LEVEL, PET_XP_PER_LEVEL } from "@/src/lib/playerProgress";
 import {
   loadStoryPickerData,
   SeasonSection,
   StoryOption,
 } from "@/src/lib/storyPicker";
+import { PET_MAX_LEVEL, PET_XP_PER_LEVEL } from "@/src/lib/playerProgress";
 import { formalizeStory } from "@/src/lib/services/aiFormalize";
 import { generateVoiceFromElevenLabs } from "@/src/lib/services/ttsEleven";
 
 const bgImage = require("../../assets/images/ImageBackground.jpg");
+
 const QUICK_CHALLENGE_ID = "quick-challenge";
 const QUICK_VARIANT_ID: "easy" | "hard" = "easy";
 
-// 🔹 نوع AI Story: من فايربيس يكون فيها نص فقط
+/** AI Story from Firestore */
 type AiStory = {
   id: string;
   title: string;
   text: string;
-  distanceMeters?: number | null;
-  estimatedTimeMin?: number | null;
-  durationMinutes?: number | null;
 };
 
-const serializeStoryForRun = (story: any | null): string | null => {
+/** Payload we send to QuickRun (extends StorySegments) */
+type QuickStoryPayload = {
+  id: string;
+  progressKey: string;
+  type: "pet" | "season";
+  challengeId: string;
+  variantId: "easy" | "hard";
+  title: string;
+  subtitle?: string | null;
+  segmentUrls: string[];
+  distanceMeters?: number | null;
+  durationMinutes?: number | null;
+  estimatedTimeMin?: number | null;
+  playMode?: "segments" | "single";
+};
+
+const mToKm = (m?: number | null) =>
+  typeof m === "number" && Number.isFinite(m)
+    ? `${(m / 1000).toFixed(1)} km`
+    : "—";
+
+const timeLabelForStory = (story: StoryOption) => {
+  const primary =
+    typeof story.durationMinutes === "number" && Number.isFinite(story.durationMinutes)
+      ? story.durationMinutes
+      : typeof story.estimatedTimeMin === "number" && Number.isFinite(story.estimatedTimeMin)
+      ? story.estimatedTimeMin
+      : null;
+  if (primary && primary > 0) return `${Math.round(primary)} min`;
+  // Fallback: rough estimate (2 min per segment)
+  if (Array.isArray(story.segmentUrls) && story.segmentUrls.length > 0) {
+    return `${Math.max(1, Math.round(story.segmentUrls.length * 2))} min`;
+  }
+  return "--";
+};
+
+/** Serialize story to URL-safe string for QuickRun */
+function serializeStoryForRun(story: QuickStoryPayload | null): string | null {
   if (!story) return null;
-  const { locked, ...payload } = story ?? {};
   try {
-    return encodeURIComponent(JSON.stringify(payload));
+    return encodeURIComponent(JSON.stringify(story));
   } catch {
     return null;
   }
-};
+}
+
+/** Render one Herb-of-Dawn episode row */
+const renderStoryOption = (
+  story: StoryOption,
+  onSelect: (s: StoryOption) => void,
+  isSelected: boolean,
+) => (
+  <Pressable
+    key={story.progressKey}
+    style={[
+      styles.modalItem,
+      story.locked && styles.modalItemLocked,
+      isSelected && styles.modalItemActive,
+    ]}
+    onPress={() => {
+      if (!story.locked) onSelect(story);
+    }}
+  >
+    <View style={styles.storyRowHeader}>
+      <Text
+        style={[
+          styles.modalItemText,
+          story.locked && styles.modalItemTextLocked,
+          isSelected && { color: "#0B3D1F" },
+        ]}
+        numberOfLines={1}
+      >
+        {story.title}
+      </Text>
+    </View>
+    <Text style={styles.modalItemMeta}>
+      {mToKm(story.distanceMeters)} · {timeLabelForStory(story)}
+    </Text>
+    <View style={styles.modalBadgeRow}>
+      {story.completed ? (
+        <Text style={styles.completedBadge}>Completed</Text>
+      ) : null}
+      {story.locked ? <Text style={styles.lockedBadge}>Locked</Text> : null}
+    </View>
+  </Pressable>
+);
 
 export default function QuickChallengeDetails() {
   const router = useRouter();
   const uid = auth.currentUser?.uid ?? null;
 
-  /* ---------------------- Equipped pet ---------------------- */
+  /* ---------------------- Equipped Pet ---------------------- */
   const [equippedPetId, setEquippedPetId] = useState<string | null>(null);
-  const [equippedPet, setEquippedPet] = useState<{
-    id: string;
-    name?: string | null;
-    imageUrl?: string | null;
-    images?: string[] | null;
-    xp?: number | null;
-    evoLevel?: number | null;
-  } | null>(null);
+  const [equippedPet, setEquippedPet] = useState<any>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -86,95 +158,126 @@ export default function QuickChallengeDetails() {
   }, [uid]);
 
   useEffect(() => {
-    if (!uid || !equippedPetId) {
-      setEquippedPet(null);
-      return;
-    }
-    const unsubPet = onSnapshot(doc(db, "Users", uid, "pets", equippedPetId), (snap) => {
-      if (!snap.exists()) {
-        setEquippedPet(null);
-        return;
-      }
-      const d = snap.data() as any;
-      const xp = typeof d?.xp === "number" ? d.xp : 0;
-      const evoLvl = Math.min(PET_MAX_LEVEL, Math.floor(xp / PET_XP_PER_LEVEL));
-      const imgs: string[] = Array.isArray(d?.images)
-        ? d.images.filter((u: any) => typeof u === "string" && u.length > 0)
-        : [];
-      const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
-      const stageName = ["Baby", "Big", "King"][Math.min(2, stageIdx)] ?? "Baby";
-      const baseName = (d?.name ?? "Pet").toString();
-      setEquippedPet({ id: snap.id, ...d, name: `${stageName} ${baseName}` });
-    });
+    if (!uid || !equippedPetId) return setEquippedPet(null);
+
+    const unsubPet = onSnapshot(
+      doc(db, "Users", uid, "pets", equippedPetId),
+      (snap) => {
+        if (!snap.exists()) return setEquippedPet(null);
+        const d = snap.data() as any;
+
+        const xp = typeof d?.xp === "number" ? d.xp : 0;
+        const evoLvl = Math.min(
+          PET_MAX_LEVEL,
+          Math.floor(xp / PET_XP_PER_LEVEL),
+        );
+
+        const imgs = Array.isArray(d?.images)
+          ? d.images.filter((u: string) => typeof u === "string")
+          : [];
+
+        const stageIdx =
+          imgs.length > 0 ? Math.min(imgs.length - 1, evoLvl) : 0;
+
+        const stageName =
+          ["Baby", "Big", "King"][Math.min(2, stageIdx)] ?? "Baby";
+
+        setEquippedPet({
+          id: snap.id,
+          ...d,
+          name: `${stageName} ${d?.name ?? "Pet"}`,
+        });
+      },
+    );
+
     return () => unsubPet();
   }, [uid, equippedPetId]);
 
   const levelInfo = useMemo(() => {
-    if (!equippedPet) {
+    if (!equippedPet)
       return {
         level: 0,
         progressPct: 0,
         remainXp: PET_XP_PER_LEVEL,
         atMax: false,
       };
-    }
-    const xp = typeof equippedPet.xp === "number" ? equippedPet.xp : 0;
-    const evoLevelRaw = Math.floor(xp / PET_XP_PER_LEVEL);
-    const evoLevel = Math.min(PET_MAX_LEVEL, evoLevelRaw);
+
+    const xp = equippedPet.xp ?? 0;
+    const lvl = Math.min(
+      PET_MAX_LEVEL,
+      Math.floor(xp / PET_XP_PER_LEVEL),
+    );
     const progress = (xp % PET_XP_PER_LEVEL) / PET_XP_PER_LEVEL;
-    const atMax = evoLevel >= PET_MAX_LEVEL;
-    const remain = atMax ? 0 : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL || 0);
+
     return {
-      level: evoLevel,
-      progressPct: Math.max(0, Math.min(1, progress)),
-      remainXp: remain,
-      atMax,
+      level: lvl,
+      progressPct: progress,
+      remainXp:
+        lvl >= PET_MAX_LEVEL
+          ? 0
+          : PET_XP_PER_LEVEL - (xp % PET_XP_PER_LEVEL),
+      atMax: lvl >= PET_MAX_LEVEL,
     };
   }, [equippedPet]);
 
-  /* ---------------------- Stories: Herb / Series ---------------------- */
+  /* ---------------------- Story Series (Herb of Dawn) ---------------------- */
   const [storyPickerOpen, setStoryPickerOpen] = useState(false);
   const [storySections, setStorySections] = useState<SeasonSection[]>([]);
   const [flatStoryOptions, setFlatStoryOptions] = useState<StoryOption[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(false);
-  const [selectedStoryKey, setSelectedStoryKey] = useState<string | null>(null);
-  const [expandedSeasonId, setExpandedSeasonId] = useState<string | null>(null);
-  const [hasUserChosenStory, setHasUserChosenStory] = useState(false);
+  const [selectedStoryKey, setSelectedStoryKey] =
+    useState<string | null>(null);
+  const [challengeDoc, setChallengeDoc] = useState<Record<string, unknown> | null>(null);
+
+  // Dropdown toggles
+  const [openSeason, setOpenSeason] = useState(false);
+  const [openAiStories, setOpenAiStories] = useState(false);
+  const [openAiSummary, setOpenAiSummary] = useState(false);
+  const [openNoAudio, setOpenNoAudio] = useState(false);
 
   useEffect(() => {
     let active = true;
     setStoriesLoading(true);
+
     (async () => {
       try {
+        // Load challenge doc to pick up estimatedTime/distance defaults
+        let docData: Record<string, unknown> | null = challengeDoc;
+        if (!docData) {
+          try {
+            const snap = await getDoc(doc(db, "challenges", QUICK_CHALLENGE_ID));
+            docData = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+            setChallengeDoc(docData);
+          } catch {
+            docData = null;
+          }
+        }
+
         const result = await loadStoryPickerData({
           challengeId: QUICK_CHALLENGE_ID,
-          challengeDoc: null,
+          challengeDoc: docData,
           variantId: QUICK_VARIANT_ID,
           userId: uid,
-          includePetStory: false,       // ❗ Quick لا يحتوي على pet story
+          includePetStory: false,
           includeSeasonSeries: true,
         });
+
         if (!active) return;
 
-        setStorySections(result.seasonSections);
-        setFlatStoryOptions(result.flatStoryOptions);
+        // Ensure clean episode titles (Episode 1, 2, 3...)
+        const numbered = result.flatStoryOptions.map((s, idx) => ({
+          ...s,
+          title: `Episode ${idx + 1}`,
+        }));
 
-        // اختار أول حلقة غير مقفولة تلقائياً
-        const defaultKey =
-          result.flatStoryOptions.find((story) => !story.locked)?.progressKey ?? null;
-        setSelectedStoryKey(defaultKey);
-        if (defaultKey) {
-          setHasUserChosenStory(true);
-        }
-      } catch (error) {
-        if (__DEV__) {
-          console.warn("[QuickChallenge] Failed to load Story Series", error);
-        }
+        setFlatStoryOptions(numbered);
+
+        // Keep seasonSections for grouping (Herb of Dawn)
+        setStorySections(result.seasonSections);
+      } catch {
         if (active) {
           setStorySections([]);
           setFlatStoryOptions([]);
-          setSelectedStoryKey(null);
-          setHasUserChosenStory(false);
         }
       } finally {
         if (active) setStoriesLoading(false);
@@ -184,75 +287,55 @@ export default function QuickChallengeDetails() {
     return () => {
       active = false;
     };
-  }, [uid]);
+  }, [uid, challengeDoc]);
 
   const selectedStory = useMemo(
     () =>
-      flatStoryOptions.find((story) => story.progressKey === selectedStoryKey) ?? null,
+      flatStoryOptions.find((s) => s.progressKey === selectedStoryKey) ??
+      null,
     [flatStoryOptions, selectedStoryKey],
   );
 
-  
-  /* ---------------------- AI Stories from Firestore ---------------------- */
-const [aiStories, setAiStories] = useState<AiStory[]>([]);
-const [selectedAiStoryId, setSelectedAiStoryId] = useState<string | null>(null);
+  /* ---------------------- AI Stories ---------------------- */
+  const [aiStories, setAiStories] = useState<AiStory[]>([]);
+  const [selectedAiStoryId, setSelectedAiStoryId] =
+    useState<string | null>(null);
+  const [aiStoriesLoading, setAiStoriesLoading] = useState(false);
 
-useEffect(() => {
-  let active = true;
-
-  (async () => {
-    try {
-      const ref = collection(db, "stories");
-      const snap = await getDocs(ref);
-
-      if (!active) return;
-
-      const list: AiStory[] = [];
-
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as any;
-
-        // 🔥 نقرأ البيانات من meta
-        const meta = d?.meta ?? {};
-
-        const title =
-          typeof meta?.title === "string" && meta.title.trim().length > 0
-            ? meta.title.trim()
-            : "AI Story";
-
-        const text =
-          typeof meta?.text === "string" && meta.text.trim().length > 0
-            ? meta.text.trim()
-            : null;
-
-        // ❗❗ أزلنا الشرط الذي يمنع ظهور القصص
-        // كان هنا سبب المشكلة:
-        // if (!text && !audioUrl) return;
-
-        list.push({
-          id: docSnap.id,
-          title,
-          text,
-          distanceMeters: d?.distanceMeters ?? null,
-          estimatedTimeMin: d?.estimatedTimeMin ?? null,
-          durationMinutes: d?.durationMinutes ?? null,
+  useEffect(() => {
+    let active = true;
+    setAiStoriesLoading(true);
+    (async () => {
+      try {
+        const ref = collection(db, "stories");
+        const snap = await getDocs(ref);
+        const list: AiStory[] = [];
+        snap.forEach((docSnap) => {
+          const d = docSnap.data() as any;
+          const text: string =
+            typeof d.text === "string"
+              ? d.text.trim()
+              : typeof d.meta?.text === "string"
+              ? d.meta.text.trim()
+              : "";
+          if (!text) return;
+          const title =
+            typeof d.title === "string" && d.title.trim().length > 0
+              ? d.title.trim()
+              : docSnap.id;
+          list.push({ id: docSnap.id, title, text });
         });
-      });
-
-      console.log("🔥 Loaded AI Stories:", list);
-      setAiStories(list);
-    } catch (error) {
-      console.log("[QuickChallenge] Failed to load AI Stories", error);
-      if (active) setAiStories([]);
-    }
-  })();
-
-  return () => {
-    active = false;
-  };
-}, []);
-
-
+        if (active) setAiStories(list);
+      } catch {
+        if (active) setAiStories([]);
+      } finally {
+        if (active) setAiStoriesLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selectedAiStory = useMemo(
     () => aiStories.find((s) => s.id === selectedAiStoryId) ?? null,
@@ -263,52 +346,69 @@ useEffect(() => {
   const [specialSelection, setSpecialSelection] = useState<
     "AI_SUMMARY" | "NO_AUDIO" | null
   >(null);
+
   const [aiSummaryModalOpen, setAiSummaryModalOpen] = useState(false);
   const [aiSummaryText, setAiSummaryText] = useState("");
+
   const [aiSummaryGenerating, setAiSummaryGenerating] = useState(false);
-  const [aiSummaryAudioUrl, setAiSummaryAudioUrl] = useState<string | null>(null);
+  const [aiSummaryAudioUrl, setAiSummaryAudioUrl] =
+    useState<string | null>(null);
 
   const handleGenerateAiSummary = useCallback(async () => {
     const text = aiSummaryText.trim();
-    if (!text) {
+    const words = text.length ? text.split(/\s+/).filter(Boolean) : [];
+    if (!words.length) {
       Alert.alert("AI Summary", "Please write something first.");
+      return;
+    }
+    if (words.length < 50) {
+      Alert.alert("AI Summary", "Please write at least 200 words for a good summary.");
       return;
     }
 
     try {
       setAiSummaryGenerating(true);
-      // 1) Gemini: يحوّل النص لقصة قصيرة تحفيزية
+
+      // Gemini → formal story text
       const storyText = await formalizeStory(text);
 
-      // 2) ElevenLabs: يحوّل القصة لصوت واحد كامل
+      // ElevenLabs → audio
       const audioUrl = await generateVoiceFromElevenLabs(storyText);
-
       setAiSummaryAudioUrl(audioUrl);
-      Alert.alert("AI Summary", "Your audio is ready. You can start the quick challenge now.");
+
+      Alert.alert(
+        "AI Summary",
+        "Your audio is ready. You can start the quick challenge now.",
+      );
       setAiSummaryModalOpen(false);
     } catch (error: any) {
-      const msg = error?.message ?? "Failed to generate AI summary audio.";
-      Alert.alert("AI Summary Error", msg);
+      Alert.alert(
+        "AI Summary Error",
+        error?.message ?? "Failed to generate AI summary audio.",
+      );
     } finally {
       setAiSummaryGenerating(false);
     }
   }, [aiSummaryText]);
 
-  /* ---------------------- Story bar label ---------------------- */
+  /* ---------------------- Story Bar Label ---------------------- */
   const storyBarLabel = useMemo(() => {
     if (specialSelection === "NO_AUDIO") return "No audio";
     if (specialSelection === "AI_SUMMARY") return "AI Summary";
     if (selectedAiStory) return `AI Story: ${selectedAiStory.title}`;
-    if (hasUserChosenStory && selectedStory) return `Story: ${selectedStory.title}`;
+    if (selectedStory) return `Story: ${selectedStory.title}`;
     return "Choose a Story";
-  }, [specialSelection, selectedAiStory, hasUserChosenStory, selectedStory]);
+  }, [specialSelection, selectedAiStory, selectedStory]);
 
+  /* ---------------------- Select Story Actions ---------------------- */
   const handleSelectStory = useCallback((story: StoryOption) => {
     if (story.locked) {
-      Alert.alert("Locked Episode", "Finish the previous episode to unlock this one.");
+      Alert.alert(
+        "Locked Episode",
+        "Finish the previous episode to unlock this one.",
+      );
       return;
     }
-    setHasUserChosenStory(true);
     setSelectedStoryKey(story.progressKey);
     setSelectedAiStoryId(null);
     setSpecialSelection(null);
@@ -319,127 +419,142 @@ useEffect(() => {
     setSelectedAiStoryId(item.id);
     setSelectedStoryKey(null);
     setSpecialSelection(null);
-    setHasUserChosenStory(true);
     setStoryPickerOpen(false);
   }, []);
 
-  /* ---------------------- Start button handler ---------------------- */
+  const handleSelectNoAudio = useCallback(() => {
+    setSelectedStoryKey(null);
+    setSelectedAiStoryId(null);
+    setSpecialSelection("NO_AUDIO");
+    setStoryPickerOpen(false);
+  }, []);
+
+  /* ---------------------- Start Quick Challenge ---------------------- */
   const handleStartQuickChallenge = useCallback(() => {
-    // لا نمنع المستخدم من البدء بأي خيار
-    // فقط نتأكد أن AI Summary عنده audio جاهز
+    // 1) NO AUDIO → send sentinel to QuickRun
+    if (specialSelection === "NO_AUDIO") {
+      router.push({
+        pathname: "/ChallengesPages/QuickRun",
+        params: { story: "NONE" },
+      });
+      return;
+    }
+
+    // 2) AI SUMMARY selected but audio not generated yet
     if (specialSelection === "AI_SUMMARY" && !aiSummaryAudioUrl) {
       setAiSummaryModalOpen(true);
       Alert.alert(
         "AI Summary",
-        "Write your text and generate the audio before starting the quick challenge.",
+        "Write your text and generate the audio before starting.",
       );
       return;
     }
 
-    const label =
-      specialSelection === "NO_AUDIO"
-        ? "No audio"
-        : specialSelection === "AI_SUMMARY"
-        ? "AI Summary"
-        : selectedAiStory
-        ? `AI Story: ${selectedAiStory.title}`
-        : selectedStory
-        ? selectedStory.title
-        : null;
+    // 3) AI SUMMARY (single audio) → QuickRun
+    if (specialSelection === "AI_SUMMARY" && aiSummaryAudioUrl) {
+      const quick: QuickStoryPayload = {
+        id: "ai-summary",
+        progressKey: "ai-summary",
+        type: "season",
+        challengeId: QUICK_CHALLENGE_ID,
+        variantId: QUICK_VARIANT_ID,
+        title: "AI Summary",
+        subtitle: null,
+        segmentUrls: [aiSummaryAudioUrl],
+        distanceMeters: null,
+        durationMinutes: null,
+        estimatedTimeMin: null,
+        playMode: "single",
+      };
 
-    Alert.alert(
-      "Ready to start?",
-      label ? `Start "${label}"?` : "Start this quick challenge?",
-      [
-        { text: "Not yet", style: "cancel" },
-        {
-          text: "Yes, start",
-          onPress: () => {
-            (async () => {
-              let storyParam: string | null = null;
+      const encoded = serializeStoryForRun(quick);
+      router.push({
+        pathname: "/ChallengesPages/QuickRun",
+        params: encoded ? { story: encoded } : {},
+      });
+      return;
+    }
 
-              if (specialSelection === "NO_AUDIO") {
-                // بدون صوت نهائياً
-                storyParam = null;
-              } else if (specialSelection === "AI_SUMMARY" && aiSummaryAudioUrl) {
-                // AI Summary: ملف صوتي واحد + AudioBar في QuickRun
-                const quickStory = {
-                  id: "ai-summary",
-                  progressKey: "ai-summary",
-                  type: "season" as const,
+    // 4) AI STORY (from Firestore text) → QuickRun with generated audio
+    if (selectedAiStory) {
+      Alert.alert(
+        "Generate audio?",
+        `Generate audio for "${selectedAiStory.title}" and start?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Yes",
+            onPress: async () => {
+              try {
+                const audioUrl = await generateVoiceFromElevenLabs(
+                  selectedAiStory.text,
+                );
+
+                const q: QuickStoryPayload = {
+                  id: selectedAiStory.id,
+                  progressKey: `aiStory:${selectedAiStory.id}`,
+                  type: "season",
                   challengeId: QUICK_CHALLENGE_ID,
                   variantId: QUICK_VARIANT_ID,
-                  title: "AI Summary",
+                  title: selectedAiStory.title,
                   subtitle: null,
-                  segmentUrls: [aiSummaryAudioUrl],
-                  playMode: "single" as const, // ❗ مهم: يخبر QuickRun أن هذه قصة بصوت واحد + AudioBar
+                  segmentUrls: [audioUrl],
                   distanceMeters: null,
                   durationMinutes: null,
                   estimatedTimeMin: null,
+                  playMode: "single",
                 };
-                storyParam = serializeStoryForRun(quickStory);
-              } else if (selectedAiStory) {
-                // AI Story من فايربيس: عند البدء نولّد الصوت مباشرة بـ ElevenLabs
-                try {
-                  const audioUrl = await generateVoiceFromElevenLabs(
-                    selectedAiStory.text,
-                  );
 
-                  const quickStory = {
-                    id: selectedAiStory.id,
-                    progressKey: `aiStory:${selectedAiStory.id}`,
-                    type: "season" as const,
-                    challengeId: QUICK_CHALLENGE_ID,
-                    variantId: QUICK_VARIANT_ID,
-                    title: selectedAiStory.title || "AI Story",
-                    subtitle: null,
-                    segmentUrls: [audioUrl],
-                    playMode: "single" as const, // ❗ AudioBar
-                    distanceMeters:
-                      typeof selectedAiStory.distanceMeters === "number"
-                        ? selectedAiStory.distanceMeters
-                        : null,
-                    durationMinutes:
-                      typeof selectedAiStory.durationMinutes === "number"
-                        ? selectedAiStory.durationMinutes
-                        : selectedAiStory.estimatedTimeMin ?? null,
-                    estimatedTimeMin:
-                      typeof selectedAiStory.estimatedTimeMin === "number"
-                        ? selectedAiStory.estimatedTimeMin
-                        : null,
-                  };
-
-                  storyParam = serializeStoryForRun(quickStory);
-                } catch (e: any) {
-                  const msg =
-                    e?.message ?? "Failed to generate audio for this AI Story.";
-                  Alert.alert("AI Story Error", msg);
-                  return;
-                }
-              } else if (selectedStory) {
-                // The Herb of Dawn / Story Series (سيستم segments القديم)
-                const quickStory = {
-                  ...selectedStory,
-                  playMode: "segments" as const, // ❗ QuickRun يستعمل المسافة والـ segments
-                };
-                storyParam = serializeStoryForRun(quickStory);
-              }
-
-              if (storyParam) {
+                const encoded = serializeStoryForRun(q);
                 router.push({
                   pathname: "/ChallengesPages/QuickRun",
-                  params: { story: storyParam },
+                  params: encoded ? { story: encoded } : {},
                 });
-              } else {
-                // No audio
-                router.push({
-                  pathname: "/ChallengesPages/QuickRun",
-                });
+              } catch (err: any) {
+                Alert.alert(
+                  "AI Story Error",
+                  err?.message ?? "Failed to generate audio.",
+                );
               }
-            })();
+            },
           },
-        },
-      ],
+        ],
+      );
+      return;
+    }
+
+    // 5) HERB OF DAWN STORY (segments mode) → 🚀 MapScreen (same as ChallengeDetails)
+    if (selectedStory) {
+  const quick: QuickStoryPayload = {
+    id: selectedStory.id,
+    progressKey: selectedStory.progressKey,
+    type: selectedStory.type, // "season"
+    challengeId: QUICK_CHALLENGE_ID,
+    variantId: QUICK_VARIANT_ID,
+    title: selectedStory.title,
+    subtitle: selectedStory.subtitle ?? null,
+    segmentUrls: selectedStory.segmentUrls,
+    distanceMeters: selectedStory.distanceMeters ?? null,
+    durationMinutes: selectedStory.durationMinutes ?? null,
+    estimatedTimeMin: selectedStory.estimatedTimeMin ?? null,
+    playMode: "segments",
+  };
+
+  const encoded = serializeStoryForRun(quick);
+
+  router.push({
+    pathname: "/ChallengesPages/QuickRun",
+    params: encoded ? { story: encoded } : {},
+  });
+
+  return;
+}
+
+
+    // Fallback: no selection at all
+    Alert.alert(
+      "Choose a story",
+      "Please pick a Herb of Dawn episode, an AI story, or No Audio first.",
     );
   }, [
     aiSummaryAudioUrl,
@@ -453,25 +568,29 @@ useEffect(() => {
   return (
     <ImageBackground source={bgImage} style={styles.bg} resizeMode="cover">
       <SafeAreaView style={styles.safe}>
+        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.h1}>Quick Challenge</Text>
           <Text style={styles.h2}>Start anywhere. Finish anytime.</Text>
         </View>
 
-        {/* Equipped pet summary */}
+        {/* Equipped Pet */}
         {equippedPet ? (
           <View style={styles.petCard}>
             <View style={styles.petRow}>
               <Image
                 source={
-                  Array.isArray(equippedPet.images) && equippedPet.images.length > 0
+                  Array.isArray(equippedPet.images) &&
+                  equippedPet.images?.length > 0
                     ? {
                         uri: equippedPet.images[
                           Math.min(
                             equippedPet.images.length - 1,
                             Math.min(
                               PET_MAX_LEVEL,
-                              Math.floor((equippedPet.xp ?? 0) / PET_XP_PER_LEVEL),
+                              Math.floor(
+                                (equippedPet.xp ?? 0) / PET_XP_PER_LEVEL,
+                              ),
                             ),
                           )
                         ],
@@ -483,23 +602,29 @@ useEffect(() => {
                 style={styles.petImg}
                 resizeMode="contain"
               />
+
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.petTitle}>Equipped Pet</Text>
                 <Text style={styles.petName} numberOfLines={1}>
-                  {(equippedPet.name ?? "Pet").toString().toUpperCase()}
+                  {equippedPet.name?.toUpperCase()}
                 </Text>
+
                 {(() => {
-                  const xpNow =
-                    typeof equippedPet?.xp === "number" ? equippedPet.xp : 0;
+                  const xpNow = equippedPet?.xp ?? 0;
                   const evo = Math.floor(xpNow / PET_XP_PER_LEVEL);
-                  const imgs: string[] = Array.isArray(equippedPet?.images)
-                    ? (equippedPet!.images as string[]).filter(
-                        (u) => typeof u === "string" && u.length > 0,
-                      )
+
+                  const imgs = Array.isArray(equippedPet?.images)
+                    ? equippedPet.images.filter((u: string) => u)
                     : [];
-                  const stageIdx = imgs.length > 0 ? Math.min(imgs.length - 1, evo) : 0;
+
+                  const stageIdx =
+                    imgs.length > 0
+                      ? Math.min(imgs.length - 1, evo)
+                      : 0;
+
                   const atMaxStage = stageIdx >= 2;
                   const displayLvl = stageIdx + 1;
+
                   return (
                     <>
                       {!atMaxStage && (
@@ -507,11 +632,16 @@ useEffect(() => {
                           <View
                             style={[
                               styles.progressFill,
-                              { width: `${Math.round(levelInfo.progressPct * 100)}%` },
+                              {
+                                width: `${Math.round(
+                                  levelInfo.progressPct * 100,
+                                )}%`,
+                              },
                             ]}
                           />
                         </View>
                       )}
+
                       <Text style={styles.levelText}>
                         {atMaxStage
                           ? "Lvl 3 MAX!"
@@ -529,13 +659,13 @@ useEffect(() => {
           </View>
         )}
 
-        {/* Story picker bar */}
+        {/* Story Picker Bar */}
         <Pressable
           onPress={() => {
             if (
               !flatStoryOptions.length &&
               !aiStories.length &&
-              specialSelection === null
+              !specialSelection
             ) {
               Alert.alert(
                 "No stories",
@@ -553,21 +683,29 @@ useEffect(() => {
           <Ionicons name="chevron-down" size={18} color="#0B3D1F" />
         </Pressable>
 
+        {/* Instructions */}
         <View style={styles.card}>
           <Text style={styles.title}>How it works</Text>
           <Text style={styles.item}>- Tap Start to begin tracking.</Text>
           <Text style={styles.item}>
             - Your position and distance are recorded on the map.
           </Text>
-          <Text style={styles.item}>- Tap Finish whenever you're done.</Text>
+          <Text style={styles.item}>
+            - Tap Finish whenever you're done.
+          </Text>
         </View>
 
+        {/* XP Rules */}
         <View style={styles.card}>
           <Text style={styles.title}>XP Rules</Text>
-          <Text style={styles.item}>- You earn 1 XP for every 5 steps.</Text>
-          <Text style={styles.item}>- Only your equipped pet evolves.</Text>
+          <Text style={styles.item}>- You earn 1 XP per 5 steps.</Text>
+          <Text style={styles.item}>- 1.5 km → 1 km (no decimals).</Text>
+          <Text style={styles.item}>
+            - Only your equipped pet evolves.
+          </Text>
         </View>
 
+        {/* Start Button */}
         <Pressable
           onPress={handleStartQuickChallenge}
           style={({ pressed }) => [
@@ -578,7 +716,7 @@ useEffect(() => {
           <Text style={styles.startText}>Start</Text>
         </Pressable>
 
-        {/* Story picker modal */}
+        {/* ================= STORY PICKER MODAL ================= */}
         <Modal
           visible={storyPickerOpen}
           transparent
@@ -591,177 +729,192 @@ useEffect(() => {
           >
             <View style={styles.modalSheet}>
               <Text style={styles.modalTitle}>Choose a Story</Text>
-              <ScrollView style={{ maxHeight: 360 }}>
-                {storiesLoading ? (
-                  <ActivityIndicator style={{ paddingVertical: 16 }} />
+
+              <ScrollView style={{ maxHeight: 420 }}>
+                {storiesLoading && aiStoriesLoading ? (
+                  <ActivityIndicator style={{ paddingVertical: 32 }} />
                 ) : (
                   <>
-                    {/* AI Stories section */}
-                    {aiStories.length > 0 && (
+                    {/* 1) HERB OF DAWN (SEASON STORIES) - DROPDOWN */}
+                    <Pressable
+                      style={styles.dropdownHeader}
+                      onPress={() => setOpenSeason((v) => !v)}
+                    >
+                      <Text style={styles.modalSectionTitle}>
+                        The Herb of Dawn
+                      </Text>
+                      <Text style={styles.dropdownArrow}>
+                        {openSeason ? "v" : ">"}
+                      </Text>
+                    </Pressable>
+
+                    {openSeason &&
+                      storySections.map((section) => {
+                        const allCompleted = section.episodes.every(
+                          (ep) => ep.completed,
+                        );
+                        return (
+                          <View
+                            key={section.seasonId}
+                            style={styles.modalSeason}
+                          >
+                            <View style={styles.storyRowHeader}>
+                              <Text style={styles.modalSectionTitle}>
+                                {section.title}
+                              </Text>
+                              {allCompleted && (
+                                <Text style={styles.completedBadge}>
+                                  Completed
+                                </Text>
+                              )}
+                            </View>
+
+                            {section.episodes.map((ep) =>
+                              renderStoryOption(
+                                ep,
+                                handleSelectStory,
+                                selectedStoryKey === ep.progressKey,
+                              ),
+                            )}
+                          </View>
+                        );
+                      })}
+
+                    {/* 2) AI STORIES (DROPDOWN) */}
+                    {!!aiStories.length && (
+                      <>
+                        <Pressable
+                          style={styles.dropdownHeader}
+                          onPress={() => setOpenAiStories((v) => !v)}
+                        >
+                          <Text style={styles.modalSectionTitle}>
+                            AI Stories
+                          </Text>
+                          <Text style={styles.dropdownArrow}>
+                            {openAiStories ? "v" : ">"}
+                          </Text>
+                        </Pressable>
+
+                        {openAiStories && (
+                          <View style={styles.modalSeason}>
+                            {aiStories.map((story) => {
+                              const active =
+                                selectedAiStoryId === story.id;
+
+                              // Compute duration label mm:ss
+                              const words = story.text.split(/\s+/).length;
+                              const minutesFloat = words / 130;
+                              const totalSeconds = Math.max(
+                                1,
+                                Math.round(minutesFloat * 60),
+                              );
+                              const mm = String(
+                                Math.floor(totalSeconds / 60),
+                              ).padStart(2, "0");
+                              const ss = String(
+                                totalSeconds % 60,
+                              ).padStart(2, "0");
+                              const durationLabel = `${mm}:${ss}`;
+
+                              return (
+                                <Pressable
+                                  key={story.id}
+                                  style={[
+                                    styles.modalItem,
+                                    active && styles.modalItemActive,
+                                  ]}
+                                  onPress={() =>
+                                    handleSelectAiStory(story)
+                                  }
+                                >
+                                  <Text
+                                    style={styles.modalItemText}
+                                    numberOfLines={1}
+                                  >
+                                    {story.title}
+                                  </Text>
+                                  <Text style={styles.modalItemMeta}>
+                                    {durationLabel}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </>
+                    )}
+
+                    {/* 3) AI SUMMARY (DROPDOWN) */}
+                    <Pressable
+                      style={styles.dropdownHeader}
+                      onPress={() => setOpenAiSummary((v) => !v)}
+                    >
+                      <Text style={styles.modalSectionTitle}>
+                        AI Summary
+                      </Text>
+                      <Text style={styles.dropdownArrow}>
+                        {openAiSummary ? "v" : ">"}
+                      </Text>
+                    </Pressable>
+
+                    {openAiSummary && (
                       <View style={styles.modalSeason}>
-                        <Text style={styles.modalSectionTitle}>AI Stories</Text>
-                        <Text style={styles.modalSectionSubtitle}>
-                          Tap any AI-generated story to play a full audio track.
-                        </Text>
-                        {aiStories.map((item) => {
-                          const active = selectedAiStoryId === item.id;
-                          return (
-                            <Pressable
-                              key={item.id}
-                              style={[
-                                styles.modalItem,
-                                active && styles.modalItemActive,
-                              ]}
-                              onPress={() => handleSelectAiStory(item)}
-                            >
-                              <Text style={styles.modalItemText}>
-                                {item.title}
-                              </Text>
-                              <Text style={styles.modalItemMeta}>
-                                {item.distanceMeters
-                                  ? `${(item.distanceMeters / 1000).toFixed(1)} km`
-                                  : "-"}{" "}
-                                •{" "}
-                                {item.estimatedTimeMin ??
-                                  item.durationMinutes ??
-                                  "--"}{" "}
-                                min
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
+                        <Pressable
+                          style={[
+                            styles.modalItem,
+                            specialSelection === "AI_SUMMARY" &&
+                              styles.modalItemActive,
+                          ]}
+                          onPress={() => {
+                            setSelectedStoryKey(null);
+                            setSelectedAiStoryId(null);
+                            setSpecialSelection("AI_SUMMARY");
+                            setStoryPickerOpen(false);
+                            setAiSummaryModalOpen(true);
+                          }}
+                        >
+                          <Text style={styles.modalItemText}>
+                            Write your own text
+                          </Text>
+                          <Text style={styles.modalItemMeta}>
+                            We’ll summarize it and turn it into audio.
+                          </Text>
+                        </Pressable>
                       </View>
                     )}
 
-                    {/* Herb / Story Series sections */}
-                    {storySections.map((section) => {
-                      const expanded = expandedSeasonId === section.seasonId;
-                      return (
-                        <View key={section.seasonId} style={styles.modalSeason}>
-                          <Pressable
-                            onPress={() =>
-                              setExpandedSeasonId(
-                                expanded ? null : section.seasonId,
-                              )
-                            }
-                          >
-                            <View style={styles.modalHeaderRow}>
-                              <View style={{ flexShrink: 1 }}>
-                                <Text style={styles.modalSectionTitle}>
-                                  {section.title}
-                                </Text>
-                                <Text style={styles.modalSectionSubtitle}>
-                                  {section.episodes.length} Episode
-                                  {section.episodes.length === 1 ? "" : "s"}
-                                </Text>
-                              </View>
-                              <Ionicons
-                                name={expanded ? "chevron-up" : "chevron-down"}
-                                size={18}
-                                color="#0B3D1F"
-                              />
-                            </View>
-                          </Pressable>
+                    {/* 4) NO AUDIO (DROPDOWN) */}
+                    <Pressable
+                      style={styles.dropdownHeader}
+                      onPress={() => setOpenNoAudio((v) => !v)}
+                    >
+                      <Text style={styles.modalSectionTitle}>
+                        No Audio
+                      </Text>
+                      <Text style={styles.dropdownArrow}>
+                        {openNoAudio ? "v" : ">"}
+                      </Text>
+                    </Pressable>
 
-                          {expanded
-                            ? section.episodes.map((story) => {
-                                const active =
-                                  selectedStoryKey === story.progressKey;
-                                return (
-                                  <Pressable
-                                    key={story.progressKey}
-                                    style={[
-                                      styles.modalItem,
-                                      active && styles.modalItemActive,
-                                      story.locked && styles.modalItemLocked,
-                                    ]}
-                                    onPress={() => handleSelectStory(story)}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.modalItemText,
-                                        story.locked &&
-                                          styles.modalItemTextLocked,
-                                      ]}
-                                    >
-                                      {story.title}
-                                    </Text>
-                                    <View style={styles.modalMetaRow}>
-                                      <Text style={styles.modalItemMeta}>
-                                        {story.distanceMeters
-                                          ? `${(
-                                              story.distanceMeters / 1000
-                                            ).toFixed(1)} km`
-                                          : "-"}{" "}
-                                        •{" "}
-                                        {story.estimatedTimeMin ??
-                                          story.durationMinutes ??
-                                          "--"}{" "}
-                                        min
-                                      </Text>
-                                      <View style={styles.badgeRow}>
-                                        {story.completed ? (
-                                          <Text style={styles.badgeCompleted}>
-                                            Completed
-                                          </Text>
-                                        ) : null}
-                                        {story.locked ? (
-                                          <Text style={styles.badgeLocked}>
-                                            Locked
-                                          </Text>
-                                        ) : null}
-                                      </View>
-                                    </View>
-                                  </Pressable>
-                                );
-                              })
-                            : null}
-                        </View>
-                      );
-                    })}
-
-                    {/* AI Summary + No Audio options */}
-                    <View style={[styles.modalSeason, { marginTop: 4 }]}>
-                      <Pressable
-                        style={[
-                          styles.modalItem,
-                          specialSelection === "AI_SUMMARY" &&
-                            styles.modalItemActive,
-                        ]}
-                        onPress={() => {
-                          setSelectedStoryKey(null);
-                          setSelectedAiStoryId(null);
-                          setSpecialSelection("AI_SUMMARY");
-                          setStoryPickerOpen(false);
-                          setAiSummaryModalOpen(true);
-                        }}
-                      >
-                        <Text style={styles.modalItemText}>AI Summary</Text>
-                        <Text style={styles.modalItemMeta}>
-                          Type any text and let AI summarize and convert it to a
-                          short audio.
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={[
-                          styles.modalItem,
-                          specialSelection === "NO_AUDIO" &&
-                            styles.modalItemActive,
-                        ]}
-                        onPress={() => {
-                          setSelectedStoryKey(null);
-                          setSelectedAiStoryId(null);
-                          setSpecialSelection("NO_AUDIO");
-                          setStoryPickerOpen(false);
-                        }}
-                      >
-                        <Text style={styles.modalItemText}>No audio</Text>
-                        <Text style={styles.modalItemMeta}>
-                          Start quick challenge with no story audio.
-                        </Text>
-                      </Pressable>
-                    </View>
+                    {openNoAudio && (
+                      <View style={styles.modalSeason}>
+                        <Pressable
+                          style={[
+                            styles.modalItem,
+                            specialSelection === "NO_AUDIO" &&
+                              styles.modalItemActive,
+                          ]}
+                          onPress={handleSelectNoAudio}
+                        >
+                          <Text style={styles.modalItemText}>
+                            No audio
+                          </Text>
+                          <Text style={styles.modalItemMeta}>
+                            Start challenge without story audio.
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
                   </>
                 )}
               </ScrollView>
@@ -769,7 +922,7 @@ useEffect(() => {
           </Pressable>
         </Modal>
 
-        {/* AI Summary popup (TextInput + Generate) */}
+        {/* ---------------------- AI SUMMARY MODAL ---------------------- */}
         <Modal
           visible={aiSummaryModalOpen}
           transparent
@@ -783,11 +936,15 @@ useEffect(() => {
             <View style={styles.aiModalSheet}>
               <Text style={styles.aiModalTitle}>AI Summary</Text>
               <Text style={styles.aiModalSubtitle}>
-                Write any text, notes, or story idea. We’ll summarize it into a
-                short motivational audio for your quick challenge.
+                Write anything. We’ll summarize it into a short motivational
+                audio.
               </Text>
+
               <ScrollView
-                style={{ maxHeight: 220, marginTop: 10 }}
+                style={{
+                  maxHeight: 220,
+                  marginTop: 10,
+                }}
                 keyboardShouldPersistTaps="handled"
               >
                 <TextInput
@@ -800,14 +957,21 @@ useEffect(() => {
                   textAlignVertical="top"
                 />
               </ScrollView>
+
               <View style={styles.aiButtonsRow}>
                 <Pressable
-                  style={[styles.aiButton, styles.aiButtonSecondary]}
+                  style={[
+                    styles.aiButton,
+                    styles.aiButtonSecondary,
+                  ]}
                   onPress={() => setAiSummaryModalOpen(false)}
                   disabled={aiSummaryGenerating}
                 >
-                  <Text style={styles.aiButtonSecondaryText}>Cancel</Text>
+                  <Text style={styles.aiButtonSecondaryText}>
+                    Cancel
+                  </Text>
                 </Pressable>
+
                 <Pressable
                   style={styles.aiButton}
                   onPress={handleGenerateAiSummary}
@@ -816,7 +980,9 @@ useEffect(() => {
                   {aiSummaryGenerating ? (
                     <ActivityIndicator color="#FFFFFF" />
                   ) : (
-                    <Text style={styles.aiButtonText}>Generate Audio</Text>
+                    <Text style={styles.aiButtonText}>
+                      Generate Audio
+                    </Text>
                   )}
                 </Pressable>
               </View>
@@ -828,28 +994,41 @@ useEffect(() => {
   );
 }
 
+/* ---------------------- STYLES ---------------------- */
 const styles = StyleSheet.create({
   bg: { flex: 1 },
   safe: { flex: 1 },
-  header: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6 },
+
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
   h1: { fontSize: 32, fontWeight: "900", color: "#000" },
   h2: { fontSize: 16, fontWeight: "700", color: "#000", marginTop: 2 },
 
+  /* Cards */
   card: {
     marginHorizontal: 20,
     marginTop: 12,
     padding: 14,
     borderRadius: 16,
     backgroundColor: "#BEE3BF",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
-  title: { fontSize: 18, fontWeight: "900", color: "#0B3D1F", marginBottom: 8 },
-  item: { fontSize: 15, fontWeight: "700", color: "#0B3D1F", marginVertical: 2 },
+  title: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#0B3D1F",
+    marginBottom: 8,
+  },
+  item: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0B3D1F",
+    marginVertical: 2,
+  },
 
+  /* Start Button */
   startBtn: {
     marginTop: 30,
     marginHorizontal: 20,
@@ -858,15 +1037,14 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
   },
-  startText: { color: "#fff", fontSize: 18, fontWeight: "900" },
+  startText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "900",
+  },
 
-  // Equipped pet block
+  /* Equipped Pet */
   petCard: {
     marginHorizontal: 20,
     marginTop: 12,
@@ -881,8 +1059,17 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: "#ECF8F1",
   },
-  petTitle: { color: "#0B3D1F", fontWeight: "800", fontSize: 12 },
-  petName: { color: "#0B3D1F", fontWeight: "900", fontSize: 16, marginTop: 4 },
+  petTitle: {
+    color: "#0B3D1F",
+    fontWeight: "800",
+    fontSize: 12,
+  },
+  petName: {
+    color: "#0B3D1F",
+    fontWeight: "900",
+    fontSize: 16,
+    marginTop: 4,
+  },
   progressBar: {
     marginTop: 6,
     height: 8,
@@ -890,10 +1077,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
   },
-  progressFill: { height: "100%", backgroundColor: "#10B981" },
-  levelText: { marginTop: 6, color: "#0B3D1F", fontWeight: "800" },
+  progressFill: {
+    height: "100%",
+    backgroundColor: "#10B981",
+  },
+  levelText: {
+    marginTop: 6,
+    color: "#0B3D1F",
+    fontWeight: "800",
+  },
 
-  // Story bar + modal
+  /* Story Picker Bar */
   storyBar: {
     marginHorizontal: 20,
     marginTop: 10,
@@ -914,70 +1108,124 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 10,
   },
+
+  /* Story Picker Modal */
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",
     justifyContent: "flex-end",
   },
   modalSheet: {
-    backgroundColor: "white",
+    backgroundColor: "#FFFFFF",
     paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 18,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    paddingTop: 16,
+    paddingBottom: 22,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
   },
   modalTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "900",
     color: "#0B3D1F",
+    marginBottom: 12,
+  },
+
+  dropdownHeader: {
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E5E7EB",
+    marginTop: 4,
+  },
+  dropdownArrow: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#0B3D1F",
+  },
+
+  modalSectionTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#0B3D1F",
+  },
+  storyRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  completedBadge: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#10B981",
+  },
+
+  modalSeason: {
+    paddingVertical: 4,
+    paddingLeft: 4,
     marginBottom: 10,
   },
-  modalEmpty: { fontSize: 13, color: "#4B5563", paddingVertical: 10 },
-  modalSeason: { marginBottom: 20 },
-  modalHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
+  modalItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E5E7EB",
   },
-  modalSectionTitle: { fontSize: 18, fontWeight: "900", color: "#0B3D1F" },
-  modalSectionSubtitle: {
+  modalItemActive: {
+    backgroundColor: "#E0F2F1",
+  },
+  modalItemLocked: {
+    opacity: 0.45,
+  },
+  modalItemTextLocked: {
+    color: "#6B7280",
+  },
+  modalItemText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0B3D1F",
+  },
+  modalItemMeta: {
     fontSize: 13,
     fontWeight: "600",
     color: "#4B5563",
     marginTop: 2,
   },
-  modalItem: {
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E7EB",
+  modalBadgeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 6,
   },
-  modalItemActive: { backgroundColor: "#E0F2F1" },
-  modalItemLocked: { opacity: 0.6 },
-  modalItemText: { fontSize: 15, fontWeight: "800", color: "#0B3D1F" },
-  modalItemTextLocked: { color: "#6B7280" },
-  modalMetaRow: { marginTop: 4 },
-  modalItemMeta: { fontSize: 13, color: "#4B5563" },
-  badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
-  badgeCompleted: {
-    fontSize: 12,
-    color: "#065F46",
+  completedBadge: {
     backgroundColor: "#D1FAE5",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    color: "#065F46",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
-  },
-  badgeLocked: {
+    fontWeight: "800",
     fontSize: 12,
-    color: "#92400E",
-    backgroundColor: "#FEF3C7",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  },
+  lockedBadge: {
+    backgroundColor: "#FEE2E2",
+    color: "#991B1B",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
+    fontWeight: "800",
+    fontSize: 12,
+  },
+  modalEmpty: {
+    paddingVertical: 32,
+    textAlign: "center",
+    color: "#6B7280",
+    fontWeight: "600",
   },
 
-  // AI Summary modal
+  /* AI Summary Modal */
   aiModalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
@@ -985,10 +1233,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   aiModalSheet: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "white",
     borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    padding: 16,
   },
   aiModalTitle: {
     fontSize: 18,
@@ -1022,14 +1269,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 999,
     backgroundColor: "#22C55E",
-    alignItems: "center",
-    justifyContent: "center",
     minWidth: 120,
+    alignItems: "center",
   },
   aiButtonText: {
-    color: "#FFFFFF",
+    color: "white",
     fontWeight: "800",
-    fontSize: 14,
   },
   aiButtonSecondary: {
     backgroundColor: "#E5E7EB",
@@ -1037,6 +1282,5 @@ const styles = StyleSheet.create({
   aiButtonSecondaryText: {
     color: "#111827",
     fontWeight: "700",
-    fontSize: 14,
   },
 });

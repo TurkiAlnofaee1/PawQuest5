@@ -14,7 +14,7 @@ export default function StoryLayout() {
       <Tabs.Screen
         name="StoryFormScreen"
         options={{
-          title: "Create",
+          title: "Creation",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="create-outline" color={color} size={size} />
           ),

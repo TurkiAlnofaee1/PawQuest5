@@ -22,7 +22,7 @@ export default function ExperienceSelector() {
       <SafeAreaView style={styles.safeArea}>
 
         {/* 🔝 TopBar */}
-        <TopBar title="Create" backTo="/(tabs)/settings" />
+        <TopBar title="Creation" backTo="/(tabs)/settings" />
 
       
 

@@ -26,6 +26,7 @@ import {
   onChallengeViolation,
   getCurrentSessionSteps,
 } from "@/src/lib/backgroundTracking";
+
 import { awardPlayerProgress } from "@/src/lib/playerProgress";
 import {
   StorySegments,
@@ -34,6 +35,22 @@ import {
 } from "@/src/lib/stories";
 
 import AudioBar, { AudioBarHandle } from "@/components/AudioBar";
+
+/* ---------------------- UTILITIES ---------------------- */
+
+const configureAudio = async () => {
+  try {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      staysActiveInBackground: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+      interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+      interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+    });
+  } catch {}
+};
 
 const haversineM = (a: LatLng, b: LatLng) => {
   const R = 6371e3;
@@ -47,416 +64,449 @@ const haversineM = (a: LatLng, b: LatLng) => {
   return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 };
 
-const fmtKm = (m: number) =>
-  m >= 1000 ? (m / 1000).toFixed(2) : (m / 1000).toFixed(2);
+const fmtKm = (m: number) => (m / 1000).toFixed(2);
 const fmtTime = (sec: number) => {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
+  const m = Math.floor(sec / 60);
   const s = sec % 60;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
+const estimateStepsFromMeters = (m: number) => Math.max(0, Math.round(m / 0.8)); // ~1.25 steps per meter
 
-const QUICK_SEGMENT_DISTANCE_M = 200;
-const QUICK_SEGMENT_THRESHOLDS = Array.from(
+const QUICK_SEG_DIST = 200; // 200m triggers
+const QUICK_THRESHOLDS = Array.from(
   { length: STORY_SEGMENT_COUNT },
-  (_, idx) => idx * QUICK_SEGMENT_DISTANCE_M,
+  (_, i) => i * QUICK_SEG_DIST,
 );
 
-// Payload جاي من QuickChallengeDetails
+/* ---------------------- STORY PAYLOAD ---------------------- */
+
 type QuickStoryPayload = StorySegments & {
   playMode?: "segments" | "single";
 };
 
 export default function QuickRun() {
   const router = useRouter();
-  const { story: storyParamRaw } = useLocalSearchParams<{ story?: string }>();
+  const { story: storyParam } = useLocalSearchParams<{ story?: string }>();
 
+  const noAudioMode = storyParam === "NONE";
+
+  /* ---------------------- Decode story ---------------------- */
   const activeStory = useMemo<QuickStoryPayload | null>(() => {
-    if (!storyParamRaw || typeof storyParamRaw !== "string" || storyParamRaw.length === 0) {
-      return null;
-    }
+    if (!storyParam || storyParam === "NONE") return null;
+
     try {
-      const decoded = decodeURIComponent(storyParamRaw);
+      const decoded = decodeURIComponent(storyParam);
       const payload = JSON.parse(decoded);
-      if (
-        !payload ||
-        !Array.isArray(payload.segmentUrls) ||
-        payload.segmentUrls.length === 0
-      ) {
-        return null;
-      }
+
+      if (!Array.isArray(payload.segmentUrls)) return null;
+
       return {
         ...payload,
         segmentUrls: payload.segmentUrls.slice(0, STORY_SEGMENT_COUNT),
-      } as QuickStoryPayload;
-    } catch (error) {
-      console.warn("[QuickRun] invalid story payload", error);
+      };
+    } catch {
       return null;
     }
-  }, [storyParamRaw]);
+  }, [storyParam]);
 
   const isSingleAudio = activeStory?.playMode === "single";
-  const isSegmentsMode = activeStory && !isSingleAudio;
+  const isEpisodes = activeStory && !isSingleAudio;
+
+  /* ---------------------- State ---------------------- */
 
   const [region, setRegion] = useState<any | null>(null);
   const [path, setPath] = useState<LatLng[]>([]);
   const [distanceM, setDistanceM] = useState(0);
+
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
-  const watchRef = useRef<Location.LocationSubscription | null>(null);
   const mapRef = useRef<MapView | null>(null);
+  const watchRef = useRef<any>(null);
   const [tick, setTick] = useState(0);
-  const [storyStatus, setStoryStatus] = useState(
-    activeStory ? "Loading story…" : "No story selected",
+
+  const elapsedSec = useMemo(
+    () => (startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0),
+    [startedAt, tick],
   );
 
-  // للسقمنت
+  const xp = useMemo(() => {
+    const liveSteps = getCurrentSessionSteps();
+    const steps = Math.max(liveSteps, estimateStepsFromMeters(distanceM));
+    const rawXp = Math.floor(steps / 5);
+    return distanceM > 0 && rawXp <= 0 ? 1 : rawXp;
+  }, [tick, distanceM]);
+
+  /* ---------------------- Audio ---------------------- */
+
   const storySoundsRef = useRef<Audio.Sound[]>([]);
-  const currentStorySegmentRef = useRef<number | null>(null);
-  const triggeredSegmentsRef = useRef<boolean[]>(
-    Array(STORY_SEGMENT_COUNT).fill(false),
+  const segTriggeredRef = useRef<boolean[]>(
+    Array(STORY_SEGMENT_COUNT).fill(false)
   );
+  const currentSegmentRef = useRef<number | null>(null);
 
-  // لصوت واحد (AI Story / AI Summary)
   const singleSoundRef = useRef<Audio.Sound | null>(null);
   const audioBarRef = useRef<AudioBarHandle | null>(null);
+
   const [audioBarVisible, setAudioBarVisible] = useState(false);
   const [audioBarPlaying, setAudioBarPlaying] = useState(false);
   const [audioBarStatus, setAudioBarStatus] = useState("Ready");
 
-  const elapsedSec = useMemo(
-    () =>
-      startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0,
-    [startedAt, tick],
-  );
+  const [storyStatus, setStoryStatus] = useState("Loading…");
+  const [storyPlaying, setStoryPlaying] = useState(false);
 
-  // Display XP: 1 XP per 5 steps from session
-  const displayedXp = useMemo(
-    () => Math.max(0, Math.floor(getCurrentSessionSteps() / 5)),
-    [tick],
-  );
-
-  useEffect(() => {
-    setStoryStatus(activeStory ? "Loading story…" : "No story selected");
+  const storyDurationLabel = useMemo(() => {
+    if (!activeStory) return null;
+    const primary =
+      typeof activeStory.estimatedTimeMin === "number" && Number.isFinite(activeStory.estimatedTimeMin)
+        ? activeStory.estimatedTimeMin
+        : typeof activeStory.durationMinutes === "number" && Number.isFinite(activeStory.durationMinutes)
+        ? activeStory.durationMinutes
+        : null;
+    if (primary && primary > 0) return `${Math.round(primary)} min`;
+    if (Array.isArray(activeStory.segmentUrls) && activeStory.segmentUrls.length > 0) {
+      return `${Math.max(1, Math.round(activeStory.segmentUrls.length * 2))} min`;
+    }
+    return null;
   }, [activeStory]);
 
-  const stopCurrentStory = useCallback(async () => {
+  /* ---------------------- STOP & UNLOAD ---------------------- */
+
+  const stopStory = useCallback(async () => {
     try {
-      // لصوت واحد
-      if (singleSoundRef.current) {
+      if (singleSoundRef.current)
         await singleSoundRef.current.stopAsync();
-        await singleSoundRef.current.setPositionAsync(0);
-        setAudioBarPlaying(false);
-      }
-      // للسقمنت
-      if (currentStorySegmentRef.current !== null) {
-        await storySoundsRef.current[currentStorySegmentRef.current]?.stopAsync();
-        currentStorySegmentRef.current = null;
-      }
-    } catch {
-      // ignore
-    }
+
+      if (currentSegmentRef.current !== null)
+        await storySoundsRef.current[currentSegmentRef.current]?.stopAsync();
+    } catch {}
+    setStoryPlaying(false);
   }, []);
 
-  const unloadStoryAudio = useCallback(async () => {
-    // unload single audio
-    if (singleSoundRef.current) {
-      try {
+  const unloadStory = useCallback(async () => {
+    try {
+      if (singleSoundRef.current)
         await singleSoundRef.current.unloadAsync();
+    } catch {}
+    singleSoundRef.current = null;
+
+    for (const s of storySoundsRef.current) {
+      try {
+        await s.unloadAsync();
       } catch {}
-      singleSoundRef.current = null;
     }
 
-    // unload segments
-    await Promise.all(
-      storySoundsRef.current.map((sound) =>
-        sound
-          .unloadAsync()
-          .catch(() => {
-            /* ignore */
-          }),
-      ),
-    );
     storySoundsRef.current = [];
+    currentSegmentRef.current = null;
+    setStoryPlaying(false);
   }, []);
 
-  // تحميل الصوت حسب الوضع (single / segments)
+  /* ---------------------- LOAD AUDIO ---------------------- */
+
   useEffect(() => {
     let cancelled = false;
 
-    const loadStory = async () => {
-      triggeredSegmentsRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
-      await stopCurrentStory();
-      await unloadStoryAudio();
+    const load = async () => {
+      segTriggeredRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+
+      await stopStory();
+      await unloadStory();
+      await configureAudio();
+
       setAudioBarVisible(false);
       setAudioBarPlaying(false);
-      setAudioBarStatus("Ready");
 
-      if (!activeStory || !activeStory.segmentUrls?.length) {
-        setStoryStatus("No story selected");
+      if (!activeStory) {
+        setStoryStatus(noAudioMode ? "No audio" : "No story selected");
         return;
       }
 
       try {
-        if (activeStory.playMode === "single") {
-          // 🔹 AI Story / AI Summary: ملف واحد + AudioBar
-          const uri = activeStory.segmentUrls[0];
-          if (!uri) {
-            setStoryStatus("Audio unavailable");
-            return;
-          }
-          const sound = new Audio.Sound();
-          await sound.loadAsync({ uri });
+        /* -------- SINGLE AUDIO -------- */
+        if (isSingleAudio) {
+          const url = activeStory.segmentUrls[0];
+          const s = new Audio.Sound();
+          await s.loadAsync({ uri: url });
+          try { await s.setVolumeAsync(1); } catch {}
+          if (cancelled) return;
 
-          if (cancelled) {
-            await sound.unloadAsync().catch(() => {});
-            return;
-          }
+          singleSoundRef.current = s;
 
-          singleSoundRef.current = sound;
-
-          sound.setOnPlaybackStatusUpdate((status) => {
-            if (!status.isLoaded) return;
-            setAudioBarPlaying(status.isPlaying);
-            if (status.isBuffering) setAudioBarStatus("Buffering…");
-            else if (status.isPlaying) setAudioBarStatus("Playing");
-            else if (status.didJustFinish) setAudioBarStatus("Finished");
+          s.setOnPlaybackStatusUpdate((st) => {
+            if (!st.isLoaded) return;
+            setAudioBarPlaying(st.isPlaying);
+            if (st.isBuffering) setAudioBarStatus("Buffering…");
+            else if (st.isPlaying) setAudioBarStatus("Playing");
+            else if (st.didJustFinish) setAudioBarStatus("Finished");
             else setAudioBarStatus("Paused");
           });
 
           setAudioBarVisible(true);
           setStoryStatus("Ready");
-        } else {
-          // 🔹 Herb / Story Series: segments على المسافة
-          const sounds: Audio.Sound[] = [];
-          for (const url of activeStory.segmentUrls.slice(0, STORY_SEGMENT_COUNT)) {
-            const sound = new Audio.Sound();
-            await sound.loadAsync({ uri: url });
-            sounds.push(sound);
-          }
-          if (cancelled) {
-            await Promise.all(
-              sounds.map((sound) =>
-                sound
-                  .unloadAsync()
-                  .catch(() => {
-                    /* ignore */
-                  }),
-              ),
-            );
-            return;
-          }
-          storySoundsRef.current = sounds;
-          currentStorySegmentRef.current = null;
-          setStoryStatus("Ready");
         }
-      } catch (error) {
-        console.warn("[QuickRun] failed to load story audio", error);
+
+        /* -------- EPISODES MODE -------- */
+        else {
+          const array: Audio.Sound[] = [];
+          for (const [idx, url] of activeStory.segmentUrls.entries()) {
+            const s = new Audio.Sound();
+            await s.loadAsync({ uri: url });
+            try { await s.setVolumeAsync(1); } catch {}
+            s.setOnPlaybackStatusUpdate((st) => {
+              if (!st.isLoaded) return;
+              if (st.isBuffering) setStoryStatus("Buffering…");
+              else if (st.isPlaying) {
+                setStoryStatus(`Playing segment ${idx + 1}`);
+              } else if (st.didJustFinish) {
+                setStoryStatus("Finished");
+              } else {
+                setStoryStatus("Paused");
+              }
+            });
+            array.push(s);
+          }
+          if (cancelled) return;
+
+          storySoundsRef.current = array;
+          setStoryStatus(array.length ? "Ready" : "Audio unavailable");
+          if (array.length) {
+            segTriggeredRef.current[0] = true;
+            void playSegment(0);
+          }
+        }
+      } catch {
         setStoryStatus("Audio unavailable");
       }
     };
 
-    loadStory();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeStory, stopCurrentStory, unloadStoryAudio]);
+    load();
+    return () => (cancelled = true);
+  }, [activeStory, isSingleAudio, playSegment]);
 
-  // تشغيل segment حسب المسافة (فقط لو مو single)
-  const playSegmentAtIndex = useCallback(async (idx: number) => {
+  /* ---------------------- AUTO PLAY SEGMENT 1 ---------------------- */
+  useEffect(() => {
+    if (isEpisodes && running && storyStatus === "Ready") {
+      if (!segTriggeredRef.current[0] && storySoundsRef.current[0]) {
+        segTriggeredRef.current[0] = true;
+        void playSegment(0);
+      } else if (!storySoundsRef.current[0]) {
+        setStoryStatus("Audio unavailable");
+      }
+    }
+  }, [isEpisodes, running, storyStatus, playSegment]);
+
+  const playSegment = useCallback(async (idx: number) => {
+    const sound = storySoundsRef.current[idx];
+    if (!sound) {
+      setStoryStatus("Audio unavailable");
+      return;
+    }
+
+    try {
+      if (
+        currentSegmentRef.current !== null &&
+        currentSegmentRef.current !== idx
+      ) {
+        await storySoundsRef.current[currentSegmentRef.current]?.stopAsync();
+      }
+
+      await sound.setPositionAsync(0);
+      await sound.playAsync();
+      currentSegmentRef.current = idx;
+      setStoryStatus(`Segment ${idx + 1} playing`);
+    } catch {
+      setStoryStatus("Audio unavailable");
+    }
+  }, []);
+
+  const pauseSegments = useCallback(async () => {
+    const idx = currentSegmentRef.current;
+    if (idx === null) return;
     const sound = storySoundsRef.current[idx];
     if (!sound) return;
     try {
-      if (
-        currentStorySegmentRef.current !== null &&
-        currentStorySegmentRef.current !== idx
-      ) {
-        await storySoundsRef.current[
-          currentStorySegmentRef.current
-        ]?.stopAsync();
-      }
-      await sound.setPositionAsync(0);
-      await sound.playAsync();
-      currentStorySegmentRef.current = idx;
-      triggeredSegmentsRef.current[idx] = true;
-      setStoryStatus(`Segment ${idx + 1} playing`);
-    } catch (error) {
-      console.warn("[QuickRun] failed to play story segment", error);
-    }
+      await sound.pauseAsync();
+      setStoryStatus("Paused");
+    } catch {}
   }, []);
+
+  /* ---------------------- SEGMENT TRIGGERS ---------------------- */
 
   useEffect(() => {
-    if (
-      !running ||
-      !activeStory ||
-      activeStory.playMode === "single" ||
-      storySoundsRef.current.length === 0
-    ) {
-      return;
-    }
-    QUICK_SEGMENT_THRESHOLDS.forEach((threshold, idx) => {
-      if (distanceM >= threshold && !triggeredSegmentsRef.current[idx]) {
-        void playSegmentAtIndex(idx);
-      }
-    });
-  }, [distanceM, running, activeStory, playSegmentAtIndex]);
+    if (!running || !activeStory || isSingleAudio) return;
 
-  // زر play/pause لـ AI Story / AI Summary (AudioBar controlled)
-  const toggleSingleAudio = useCallback(async () => {
+    const maxSegments = Math.min(
+      STORY_SEGMENT_COUNT,
+      activeStory.segmentUrls.length,
+    );
+    for (let idx = 0; idx < maxSegments; idx += 1) {
+      const threshold = idx * QUICK_SEG_DIST;
+      if (distanceM + 1 >= threshold && !segTriggeredRef.current[idx]) {
+        segTriggeredRef.current[idx] = true;
+        void playSegment(idx);
+      }
+    }
+  }, [distanceM, activeStory, running, isSingleAudio, playSegment]);
+
+  /* ---------------------- AI Story Toggle ---------------------- */
+
+  const toggleAI = useCallback(async () => {
     const s = singleSoundRef.current;
     if (!s) return;
-    try {
-      const status = await s.getStatusAsync();
-      if (!status.isLoaded) return;
 
-      if (status.isPlaying) {
-        await s.pauseAsync();
-        setAudioBarPlaying(false);
-        setAudioBarStatus("Paused");
-      } else {
-        await s.playAsync();
-        setAudioBarPlaying(true);
-        setAudioBarStatus("Playing");
-      }
-    } catch (err) {
-      console.log("[QuickRun] single audio toggle error:", err);
-    }
+    const st = await s.getStatusAsync();
+    if (!st.isLoaded) return;
+
+    if (st.isPlaying) await s.pauseAsync();
+    else await s.playAsync();
   }, []);
 
-  const startWatch = useCallback(async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
+  /* ---------------------- START TRACKING ---------------------- */
+
+  const start = useCallback(async () => {
+    const { status } =
+      await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("Location needed", "Enable location to start the quick challenge.");
+      Alert.alert("Enable location to continue");
       return;
     }
-    const current = await Location.getCurrentPositionAsync({
+
+    const cur = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     });
-    const initial: LatLng = {
-      latitude: current.coords.latitude,
-      longitude: current.coords.longitude,
-    };
+
+    const p = {
+      latitude: cur.coords.latitude,
+      longitude: cur.coords.longitude,
+    } as LatLng;
+
     setRegion({
-      latitude: initial.latitude,
-      longitude: initial.longitude,
+      latitude: p.latitude,
+      longitude: p.longitude,
       latitudeDelta: 0.01,
       longitudeDelta: 0.01,
     });
-    setPath([initial]);
+
+    setPath([p]);
+    setDistanceM(0);
+
+    segTriggeredRef.current = Array(STORY_SEGMENT_COUNT).fill(false);
+
     setStartedAt(Date.now());
     setRunning(true);
 
-    // start calories/steps session
-    void beginChallengeSession();
+    await beginChallengeSession();
 
+    /* -------- FIXED DISTANCE TRACKING -------- */
     watchRef.current = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
-        timeInterval: 2000,
         distanceInterval: 3,
+        timeInterval: 2000,
       },
       (loc) => {
         const pt: LatLng = {
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
         };
+
         setPath((prev) => {
-          if (prev.length === 0) return [pt];
           const last = prev[prev.length - 1];
-          const d = haversineM(last, pt);
-          if (!Number.isFinite(d) || d < 0.5) return prev; // ignore tiny jitter
-          setDistanceM((m) => m + d);
+          if (last) {
+            const d = haversineM(last, pt);
+            if (d > 0.5) {
+              setDistanceM((m) => m + d);
+            }
+          }
           return [...prev, pt];
         });
-        // keep camera following the user
-        mapRef.current?.animateCamera(
-          { center: pt, zoom: 16 },
-          { duration: 500 },
-        );
+
+        mapRef.current?.animateCamera({ center: pt, zoom: 16 });
       },
     );
   }, []);
 
   useEffect(() => {
-    void startWatch();
+    void start();
     return () => {
       watchRef.current?.remove();
-      watchRef.current = null;
-      void stopCurrentStory();
-      void unloadStoryAudio();
+      void stopStory();
+      void unloadStory();
     };
-  }, [startWatch, stopCurrentStory, unloadStoryAudio]);
+  }, []);
 
-  // Overspeed handler: abort without rewards
+  /* ---------------------- OVERSPEED ---------------------- */
+
   useEffect(() => {
     const off = onChallengeViolation(() => {
-      if (!running) return;
-      try {
-        watchRef.current?.remove();
-      } catch {}
-      watchRef.current = null;
+      watchRef.current?.remove();
       setRunning(false);
-      void stopCurrentStory();
-      void unloadStoryAudio();
+      stopStory();
+      unloadStory();
+
       Alert.alert(
         "Warning",
         "Using transportation is not allowed.",
-        [{ text: "I understand", onPress: () => router.replace("/(tabs)") }],
-        { cancelable: false },
+        [{ text: "OK", onPress: () => router.replace("/(tabs)") }],
       );
     });
-    return () => {
-      try {
-        off();
-      } catch {}
-    };
-  }, [running, router, stopCurrentStory, unloadStoryAudio]);
 
-  // Tick كل ثانية (عشان التايمر حتى لو ما يتحرك)
+    return () => off();
+  }, []);
+
+  /* ---------------------- TIMER ---------------------- */
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [running]);
 
+  /* ---------------------- FINISH ---------------------- */
+
   const finish = useCallback(async () => {
-    if (!running) return;
     watchRef.current?.remove();
-    watchRef.current = null;
     setRunning(false);
 
-    await stopCurrentStory();
-    await unloadStoryAudio();
+    await stopStory();
+    await unloadStory();
 
-    // End background session and persist steps/calories to today; use steps for XP
-    let sessionTotals = { steps: 0, calories: 0 };
+    let totals = { steps: 0, calories: 0 };
+
     try {
-      sessionTotals = await endChallengeSessionAndPersist();
+      totals = await endChallengeSessionAndPersist();
     } catch {}
 
-    // 1 XP for each 5 steps
-    const xp = Math.max(0, Math.floor((sessionTotals.steps ?? 0) / 5));
+    const stepsFromSession = totals.steps ?? 0;
+    const stepsLive = getCurrentSessionSteps();
+    const stepsEstimate = Math.max(
+      stepsFromSession,
+      stepsLive,
+      estimateStepsFromMeters(distanceM),
+    );
+    let gainedXp = Math.max(
+      xp, // what user saw during the run
+      Math.floor(stepsEstimate / 5),
+    );
+    if ((distanceM > 0 || stepsEstimate > 0) && gainedXp <= 0) gainedXp = 1;
+
     const uid = auth.currentUser?.uid;
-    if (uid && xp > 0) {
+    if (uid && gainedXp > 0) {
       try {
-        await awardPlayerProgress({ uid, xpEarned: xp });
-      } catch (e) {
-        // ignore award errors for UX; still show summary
-      }
+        await awardPlayerProgress({ uid, xpEarned: gainedXp });
+      } catch {}
     }
+
     if (uid && activeStory) {
       try {
         await saveStoryCompletion(uid, activeStory);
-      } catch (error) {
-        console.warn("[QuickRun] failed to save story completion", error);
-      }
+      } catch {}
     }
 
-    Alert.alert("Great Job!", `You gained ${xp} XP`, [
-      { text: "Back to Home", onPress: () => router.replace("/(tabs)") },
+    Alert.alert("Great job!", `You gained ${gainedXp} XP`, [
+      { text: "OK", onPress: () => router.replace("/(tabs)") },
     ]);
-  }, [activeStory, running, router, stopCurrentStory, unloadStoryAudio]);
+  }, [activeStory, distanceM, xp, router]);
+
+  /* ---------------------- RENDER ---------------------- */
 
   return (
     <SafeAreaView style={styles.container}>
@@ -464,6 +514,7 @@ export default function QuickRun() {
         <Text style={styles.title}>Quick Challenge Run</Text>
       </View>
 
+      {/* MAP */}
       <View style={styles.mapWrap}>
         <MapView
           ref={mapRef}
@@ -473,61 +524,74 @@ export default function QuickRun() {
         >
           {path.length > 1 && (
             <Polyline
-              coordinates={path}
               strokeWidth={5}
               strokeColor="#2F80ED"
+              coordinates={path}
             />
           )}
         </MapView>
       </View>
 
+      {/* AI AUDIOBAR */}
+      {isSingleAudio && (
+        <View style={{ paddingHorizontal: 14, marginTop: 12 }}>
+          <AudioBar
+            ref={audioBarRef}
+            visible={audioBarVisible}
+            title={activeStory?.title ?? "Story"}
+            controlledState={{
+              isPlaying: audioBarPlaying,
+              statusText: audioBarStatus,
+              onPlay: toggleAI,
+              onPause: toggleAI,
+            }}
+          />
+        </View>
+      )}
+
+      {/* STATS */}
       <View style={styles.statsCard}>
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Distance</Text>
           <Text style={styles.statValue}>{fmtKm(distanceM)} km</Text>
         </View>
+
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Time</Text>
           <Text style={styles.statValue}>{fmtTime(elapsedSec)}</Text>
         </View>
+
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>XP</Text>
-          <Text style={styles.statValue}>{displayedXp}</Text>
+          <Text style={styles.statValue}>{xp}</Text>
         </View>
       </View>
 
-      <View style={styles.storyCard}>
-        <Text style={styles.storyLabel}>
-          {isSingleAudio ? "Story Audio" : "Story Segments"}
-        </Text>
-        {activeStory ? (
-          <>
-            <Text style={styles.storyTitle} numberOfLines={1}>
-              {activeStory.title}
-            </Text>
-            <Text style={styles.storyStatus}>
-              {isSingleAudio ? audioBarStatus : storyStatus}
-            </Text>
-            {isSingleAudio ? (
-              <Text style={styles.storyHint}>
-                Tap play to listen while you walk.
-              </Text>
-            ) : (
-              <Text style={styles.storyHint}>
-                0m · 200m · 400m · 600m · 800m
-              </Text>
-            )}
-          </>
-        ) : (
-          <>
-            <Text style={styles.storyStatus}>No story selected</Text>
-            <Text style={styles.storyHint}>
-              Start walking without audio or go back and choose a story.
-            </Text>
-          </>
-        )}
-      </View>
+      {/* EPISODES */}
+      {isEpisodes && (
+        <View style={styles.storyCard}>
+          <Text style={styles.storyLabel}>Story Audio</Text>
+          <Text style={styles.storyTitle}>{activeStory?.title}</Text>
+          {storyDurationLabel && (
+            <Text style={styles.storyMeta}>{storyDurationLabel}</Text>
+          )}
+          <Text style={styles.storyStatus}>{storyStatus}</Text>
+          <Text style={styles.storyHint}>
+            0m · 200m · 400m · 600m · 800m
+          </Text>
+        </View>
+      )}
 
+      {/* NO AUDIO */}
+      {noAudioMode && !activeStory && (
+        <View style={{ padding: 16 }}>
+          <Text style={{ color: "#fff", textAlign: "center" }}>
+            Walking without audio.
+          </Text>
+        </View>
+      )}
+
+      {/* FINISH BUTTON */}
       <Pressable
         onPress={finish}
         style={({ pressed }) => [
@@ -537,29 +601,16 @@ export default function QuickRun() {
       >
         <Text style={styles.finishText}>Finish</Text>
       </Pressable>
-
-      {/* AudioBar فقط لو AI Story / AI Summary */}
-      {isSingleAudio && (
-        <AudioBar
-          ref={audioBarRef}
-          title={activeStory?.title ?? "AI Story"}
-          visible={audioBarVisible}
-          controlledState={{
-            isPlaying: audioBarPlaying,
-            statusText: audioBarStatus,
-            onPlay: toggleSingleAudio,
-            onPause: toggleSingleAudio,
-          }}
-        />
-      )}
     </SafeAreaView>
   );
 }
 
+/* ---------------------- STYLES ---------------------- */
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-  header: { padding: 12, backgroundColor: "#000", alignItems: "center" },
-  title: { color: "#fff", fontWeight: "900", fontSize: 18, textAlign: "center" },
+  header: { padding: 12, alignItems: "center" },
+  title: { color: "#fff", fontSize: 18, fontWeight: "900" },
 
   mapWrap: { flex: 1 },
   map: { flex: 1 },
@@ -567,51 +618,32 @@ const styles = StyleSheet.create({
   statsCard: {
     flexDirection: "row",
     backgroundColor: "#BEE3BF",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
     paddingVertical: 12,
-    paddingHorizontal: 10,
-    gap: 10,
+    paddingHorizontal: 8,
   },
   statBox: { flex: 1, alignItems: "center" },
   statLabel: { color: "#0B3D1F", fontWeight: "700" },
-  statValue: {
-    color: "#0B3D1F",
-    fontWeight: "900",
-    fontSize: 18,
-    marginTop: 2,
-  },
+  statValue: { color: "#0B3D1F", fontWeight: "900", fontSize: 18 },
 
   storyCard: {
     marginHorizontal: 14,
     marginTop: 12,
     backgroundColor: "#111827",
+    padding: 14,
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
   },
-  storyLabel: {
-    color: "#9CA3AF",
-    fontWeight: "700",
-    fontSize: 12,
-    textTransform: "uppercase",
-  },
-  storyTitle: {
-    color: "#F9FAFB",
-    fontWeight: "900",
-    fontSize: 16,
-    marginTop: 4,
-  },
-  storyStatus: { color: "#F9FAFB", fontSize: 14, marginTop: 4 },
-  storyHint: { color: "#D1D5DB", fontSize: 12, marginTop: 2 },
+  storyLabel: { color: "#9CA3AF", fontWeight: "700", fontSize: 12 },
+  storyTitle: { color: "#fff", fontSize: 16, fontWeight: "900", marginTop: 4 },
+  storyMeta: { color: "#D1D5DB", marginTop: 2 },
+  storyStatus: { color: "#fff", marginTop: 4 },
+  storyHint: { color: "#ccc", marginTop: 4, fontSize: 12 },
 
   finishBtn: {
-    backgroundColor: "#22C55E",
     margin: 14,
-    borderRadius: 16,
+    backgroundColor: "#22C55E",
     paddingVertical: 16,
+    borderRadius: 16,
     alignItems: "center",
-    justifyContent: "center",
   },
-  finishText: { color: "#fff", fontWeight: "900", fontSize: 18 },
+  finishText: { color: "#fff", fontSize: 18, fontWeight: "900" },
 });
