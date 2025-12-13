@@ -2,8 +2,9 @@
 import "react-native-gesture-handler/jestSetup";
 
 jest.mock("expo-av", () => {
+  type PlaybackStatus = { isLoaded: boolean; isPlaying: boolean };
   const mockSound = () => {
-    let statusCb: ((status: { isLoaded: boolean; isPlaying: boolean }) => void) | null = null;
+    let statusCb: ((status: PlaybackStatus) => void) | null = null;
     return {
       unloadAsync: jest.fn().mockResolvedValue(undefined),
       playAsync: jest.fn().mockImplementation(async () => {
@@ -15,7 +16,7 @@ jest.mock("expo-av", () => {
       stopAsync: jest.fn().mockResolvedValue(undefined),
       setPositionAsync: jest.fn().mockResolvedValue(undefined),
       setVolumeAsync: jest.fn().mockResolvedValue(undefined),
-      setOnPlaybackStatusUpdate: jest.fn().mockImplementation((cb) => {
+      setOnPlaybackStatusUpdate: jest.fn().mockImplementation((cb: (status: PlaybackStatus) => void) => {
         statusCb = cb;
       }),
     };

@@ -8,7 +8,10 @@
       "es2015",
       "dom"
     ],
-    "moduleResolution": "node",
+    "types": [
+      "jest"
+    ],
+    "moduleResolution": "Bundler",
     "paths": {
       "@/*": [
         "./*"
