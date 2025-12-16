@@ -144,7 +144,7 @@ function mapAuthError(e: any) {
     return 'This account has been disabled.';
   }
 
-  return typeof e === 'string' ? e : 'Authentication failed. Please try again.';
+  return typeof e === 'string' ? e : 'Email or password is incorrect. Please try again.';
 }
 
 export type { User };
