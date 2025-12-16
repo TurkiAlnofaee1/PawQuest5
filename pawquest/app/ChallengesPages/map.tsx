@@ -377,6 +377,21 @@ export default function MapScreen() {
     setStoryStatus("Ready");
   }, []);
 
+  const stopAllStoryPlayback = useCallback(async () => {
+    // Stop any active/queued segments to ensure audio is fully halted
+    for (const s of storySoundsRef.current) {
+      try {
+        await s.stopAsync();
+      } catch {}
+      try {
+        await s.setPositionAsync(0);
+      } catch {}
+    }
+    currentStorySegmentRef.current = null;
+    setStoryPlaying(false);
+    setStoryStatus("Ready");
+  }, []);
+
   const playSegmentAtIndex = useCallback(
     async (targetIndex: number) => {
       if (!activeStory || !storySoundsRef.current[targetIndex]) return;
@@ -1128,7 +1143,7 @@ export default function MapScreen() {
             if (navigatingRef.current) return;
             navigatingRef.current = true;
             if (storyModeActive) {
-              await stopStoryPlayback();
+              await stopAllStoryPlayback();
             } else if (audioUrl) {
               audioRef.current?.fadeOut();
             }
