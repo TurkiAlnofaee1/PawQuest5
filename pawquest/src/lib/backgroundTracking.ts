@@ -5,8 +5,7 @@ import * as BackgroundFetch from "expo-background-fetch";
 import { Pedometer } from "expo-sensors";
 import { AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { auth, db } from "./firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { auth } from "./firebase";
 import { upsertDailyCalories, upsertDailySteps } from "./userMetrics";
 
 const LOCATION_TASK = "BG_LOCATION_UPDATES";
@@ -183,42 +182,15 @@ function attachLiveStepWatcher() {
 type Session = {
   active: boolean;
   startedAt: number;
-  lastSampleAt: number;
   steps: number;
   calories: number;
-  weightKg: number; // used for calorie calc
   pedo?: { remove?: () => void } | null;
   speedMs: number; // last known speed snapshot
   monitorId?: any;
   overSpeedSec: number;
 };
 
-const DEFAULT_WEIGHT_KG = 70;
 let session: Session | null = null;
-
-function speedToMET(speedMs: number): number {
-  const kph = Math.max(0, speedMs) * 3.6;
-  if (kph < 3) return 2.3; // very slow walk
-  if (kph < 4) return 2.9; // slow walk
-  if (kph < 5) return 3.5; // normal walk
-  if (kph < 6) return 4.3; // brisk
-  if (kph < 8) return 7.0; // slow run / jog
-  if (kph < 10) return 9.8; // run
-  return 11.5; // fast run
-}
-
-async function loadUserWeightKg(): Promise<number> {
-  try {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return DEFAULT_WEIGHT_KG;
-    const snap = await getDoc(doc(db, "Users", uid));
-    const w = (snap.data() as any)?.weight;
-    const n = typeof w === "string" ? Number(w) : w;
-    return Number.isFinite(n) && n > 0 ? n : DEFAULT_WEIGHT_KG;
-  } catch {
-    return DEFAULT_WEIGHT_KG;
-  }
-}
 
 async function snapshotLatestSpeed(): Promise<number> {
   const s = await getNumber(BG_KEYS.latestSpeedMs, 0);
@@ -228,15 +200,12 @@ async function snapshotLatestSpeed(): Promise<number> {
 /** Call when a challenge or quick run starts */
 export async function beginChallengeSession(): Promise<void> {
   if (session?.active) return;
-  const weightKg = await loadUserWeightKg();
   const now = Date.now();
   session = {
     active: true,
     startedAt: now,
-    lastSampleAt: now,
     steps: 0,
     calories: 0,
-    weightKg,
     pedo: null,
     speedMs: await snapshotLatestSpeed(),
     monitorId: null,
@@ -249,17 +218,12 @@ export async function beginChallengeSession(): Promise<void> {
     session.pedo = Pedometer.watchStepCount(async ({ steps }) => {
       const s = session;
       if (!s || !s.active) return;
-      const nowTick = Date.now();
       const deltaSteps = Math.max(0, steps);
       s.steps += deltaSteps;
       // update speed snapshot (best-effort)
       s.speedMs = await snapshotLatestSpeed();
-      const dtHours = Math.max(0, (nowTick - s.lastSampleAt) / 3600000);
-      if (dtHours > 0) {
-        const met = speedToMET(s.speedMs);
-        s.calories += met * s.weightKg * dtHours; // kcal
-        s.lastSampleAt = nowTick;
-      }
+      // 1 calorie per 35 steps
+      s.calories = Math.floor(Math.max(0, s.steps) / 35);
     });
   }
 
@@ -295,27 +259,20 @@ export async function endChallengeSessionAndPersist(): Promise<{ steps: number; 
   }
 
   if (!s || !s.active) return { steps: 0, calories: 0 };
-
-  // Finalize one last calorie slice since the last sample
-  const now = Date.now();
-  const dtHours = Math.max(0, (now - s.lastSampleAt) / 3600000);
-  if (dtHours > 0) {
-    const met = speedToMET(s.speedMs);
-    s.calories += met * s.weightKg * dtHours;
-  }
+  const caloriesForPersist = Math.floor(Math.max(0, s.steps) / 35);
 
   const uid = auth.currentUser?.uid;
   if (uid) {
     try {
       const today = new Date();
       await upsertDailySteps(uid, today, Math.round(s.steps), 'sum');
-      await upsertDailyCalories(uid, today, Math.round(s.calories), 'sum');
+      await upsertDailyCalories(uid, today, caloriesForPersist, 'sum');
     } catch {
       // ignore persistence errors silently
     }
   }
 
-  return { steps: Math.round(s.steps), calories: Math.round(s.calories) };
+  return { steps: Math.round(s.steps), calories: caloriesForPersist };
 }
 
 /** Utility to check if a session is currently running */
